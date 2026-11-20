@@ -1,7 +1,8 @@
 import type { RefObject } from 'react';
-import { Layers, RotateCw, Upload } from 'lucide-react';
+import { RotateCw, Upload } from 'lucide-react';
 
 import { BookmarkFilter } from '@/components/BookmarkFilter';
+import { LogoMark } from '@/components/LogoMark';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -27,9 +28,7 @@ export function TopNav({
     <header className="sticky top-0 z-40 border-b border-border bg-background">
       <div className="mx-auto flex h-16 w-full max-w-[1200px] items-center gap-3 px-5 sm:px-8">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-primary text-primary-foreground shadow-sm">
-            <Layers className="size-4" strokeWidth={2.2} />
-          </div>
+          <LogoMark size={32} className="shadow-sm" />
           <div className="min-w-0">
             <h1 className="text-sm leading-tight font-semibold tracking-tight">Qianxu</h1>
             <p className="hidden text-[11px] leading-tight text-muted-foreground sm:block">

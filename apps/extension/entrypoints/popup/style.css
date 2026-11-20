@@ -3,7 +3,7 @@
   --text: #18181b;
   --muted: #71717a;
   --border: #e4e4e7;
-  --accent: #2563eb;
+  --accent: #5b5fd6;
   --accent-text: #ffffff;
   --danger: #dc2626;
 }
@@ -25,8 +25,15 @@ body {
 
 .header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: block;
 }
 
 .header h1 {
