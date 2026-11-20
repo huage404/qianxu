@@ -23,12 +23,16 @@ export interface BookmarksResponse {
   source: typeof MSG_SOURCE_EXT;
   type: 'BOOKMARKS_RESPONSE';
   requestId: string;
+  /** 读取收藏夹是否成功；旧版本扩展不带该字段，视为成功 */
+  ok?: boolean;
   bookmarks: Bookmark[];
 }
 
 export interface BookmarksUpdated {
   source: typeof MSG_SOURCE_EXT;
   type: 'BOOKMARKS_UPDATED';
+  /** 读取收藏夹是否成功；旧版本扩展不带该字段，视为成功 */
+  ok?: boolean;
   bookmarks: Bookmark[];
 }
 
@@ -53,6 +57,7 @@ export function isBookmarksResponse(value: unknown): value is BookmarksResponse 
     msg.source === MSG_SOURCE_EXT &&
     msg.type === 'BOOKMARKS_RESPONSE' &&
     typeof msg.requestId === 'string' &&
+    isOptionalBoolean(msg.ok) &&
     Array.isArray(msg.bookmarks)
   );
 }
@@ -63,8 +68,13 @@ export function isBookmarksUpdated(value: unknown): value is BookmarksUpdated {
   return (
     msg.source === MSG_SOURCE_EXT &&
     msg.type === 'BOOKMARKS_UPDATED' &&
+    isOptionalBoolean(msg.ok) &&
     Array.isArray(msg.bookmarks)
   );
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === 'boolean';
 }
 
 export function isHttpUrl(value: string): boolean {

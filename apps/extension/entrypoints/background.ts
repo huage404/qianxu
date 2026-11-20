@@ -7,15 +7,19 @@ import {
   listBrowserBookmarks,
   watchBookmarks,
 } from '@/utils/bookmarks';
+import { isAllowedOrigin } from '@/utils/site';
 
 const MIGRATION_KEY = 'legacy-bookmarks-migrated';
 
 export default defineBackground(() => {
-  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!isGetBookmarksMessage(message)) return;
+    // content script 已在白名单 origin 上做门禁，这里是第二道；
+    // 无法确认来源时不返回任何书签数据。
+    if (!isAllowedSender(sender)) return;
     void listBrowserBookmarks()
-      .then((bookmarks) => sendResponse({ bookmarks }))
-      .catch(() => sendResponse({ bookmarks: [] }));
+      .then((bookmarks) => sendResponse({ ok: true, bookmarks }))
+      .catch(() => sendResponse({ ok: false, bookmarks: [] }));
     return true;
   });
 
@@ -40,6 +44,18 @@ function isGetBookmarksMessage(value: unknown): boolean {
     value !== null &&
     (value as { type?: unknown }).type === EXT_MSG_GET_BOOKMARKS
   );
+}
+
+function isAllowedSender(sender: { tab?: unknown; origin?: string; url?: string }): boolean {
+  // 没有 tab 的是 popup、options 等扩展自身页面
+  if (!sender.tab) return true;
+  if (sender.origin) return isAllowedOrigin(sender.origin);
+  if (!sender.url) return false;
+  try {
+    return isAllowedOrigin(new URL(sender.url).origin);
+  } catch {
+    return false;
+  }
 }
 
 async function migrateLegacyBookmarks() {
