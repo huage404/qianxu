@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Bookmark } from '@qianxu/shared';
 import {
   BookmarkPlus,
+  Clock3,
   FileJson,
   Folder,
   LockKeyhole,
   Puzzle,
   SearchX,
+  TrendingUp,
   TriangleAlert,
 } from 'lucide-react';
 
@@ -29,6 +31,16 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { requestBookmarks, subscribeBookmarks } from '@/lib/bridge';
 import { parseBookmarksJson } from '@/lib/import';
+import {
+  loadClickStats,
+  loadSortMode,
+  recordClick,
+  saveClickStats,
+  saveSortMode,
+  sortBookmarks,
+  type ClickStats,
+  type SortMode,
+} from '@/lib/usage';
 import { cn } from '@/lib/utils';
 
 type Status = 'checking' | 'connected' | 'absent';
@@ -41,10 +53,6 @@ interface BookmarkGroup {
   key: string;
   label: string;
   bookmarks: Bookmark[];
-}
-
-function sortByNewest(list: Bookmark[]): Bookmark[] {
-  return [...list].sort((a, b) => b.createdAt - a.createdAt);
 }
 
 function folderPathOf(bookmark: Bookmark): string[] {
@@ -116,10 +124,20 @@ export function HomeShell() {
   const [importError, setImportError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [activeFolder, setActiveFolder] = useState<string>(ALL_FOLDERS);
+  const [sortMode, setSortMode] = useState<SortMode>('recent');
+  const [clickStats, setClickStats] = useState<ClickStats>({});
 
+  const clickStatsRef = useRef<ClickStats>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const desktopFilterRef = useRef<HTMLInputElement>(null);
   const mobileFilterRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const storedStats = loadClickStats();
+    clickStatsRef.current = storedStats;
+    setClickStats(storedStats);
+    setSortMode(loadSortMode());
+  }, []);
 
   const loadFromExtension = useCallback(async () => {
     setStatus('checking');
@@ -131,7 +149,7 @@ export function HomeShell() {
     }
     setStatus('connected');
     setFromFile(false);
-    setBookmarks(sortByNewest(result));
+    setBookmarks(result);
   }, []);
 
   useEffect(() => {
@@ -140,9 +158,14 @@ export function HomeShell() {
       setStatus('connected');
       setFromFile(false);
       setImportError(null);
-      setBookmarks(sortByNewest(next));
+      setBookmarks(next);
     });
   }, [loadFromExtension]);
+
+  const ordered = useMemo(
+    () => sortBookmarks(bookmarks, sortMode, clickStats),
+    [bookmarks, sortMode, clickStats],
+  );
 
   const folders = useMemo(() => buildFolderStats(bookmarks), [bookmarks]);
 
@@ -157,13 +180,14 @@ export function HomeShell() {
   const visible = useMemo(() => {
     const scoped =
       activeFolder === ALL_FOLDERS
-        ? bookmarks
-        : bookmarks.filter((bookmark) => folderKeyOf(bookmark) === activeFolder);
+        ? ordered
+        : ordered.filter((bookmark) => folderKeyOf(bookmark) === activeFolder);
     if (!normalizedQuery) return scoped;
     return scoped.filter((bookmark) => matchesQuery(bookmark, normalizedQuery));
-  }, [bookmarks, activeFolder, normalizedQuery]);
+  }, [ordered, activeFolder, normalizedQuery]);
 
-  const grouped = activeFolder === ALL_FOLDERS && !normalizedQuery;
+  const grouped =
+    sortMode === 'recent' && activeFolder === ALL_FOLDERS && !normalizedQuery;
   const groups = useMemo(() => (grouped ? groupByFolder(visible) : []), [grouped, visible]);
 
   const total = bookmarks.length;
@@ -189,7 +213,19 @@ export function HomeShell() {
     setFromFile(true);
     setQuery('');
     setActiveFolder(ALL_FOLDERS);
-    setBookmarks(sortByNewest(parsed));
+    setBookmarks(parsed);
+  };
+
+  const handleOpenBookmark = useCallback((bookmark: Bookmark) => {
+    const next = recordClick(clickStatsRef.current, bookmark.url);
+    clickStatsRef.current = next;
+    saveClickStats(next);
+    setClickStats(next);
+  }, []);
+
+  const handleSortModeChange = (mode: SortMode) => {
+    setSortMode(mode);
+    saveSortMode(mode);
   };
 
   const clearFilters = () => {
@@ -296,15 +332,20 @@ export function HomeShell() {
               </div>
             )}
 
-            <div className="mt-6 flex items-baseline justify-between gap-3 lg:mt-0">
+            <div className="mt-6 flex items-center justify-between gap-3 lg:mt-0">
               <h2 className="text-[13px] font-medium text-muted-foreground">
                 {activeFolderLabel}
               </h2>
-              <span className="text-[11px] tabular-nums text-muted-foreground">
-                {normalizedQuery || activeFolder !== ALL_FOLDERS
-                  ? `${visible.length} / ${total} 个`
-                  : `${total} 个`}
-              </span>
+              <div className="flex items-center gap-3">
+                {total > 0 && (
+                  <SortToggle mode={sortMode} onChange={handleSortModeChange} />
+                )}
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {normalizedQuery || activeFolder !== ALL_FOLDERS
+                    ? `${visible.length} / ${total} 个`
+                    : `${total} 个`}
+                </span>
+              </div>
             </div>
 
             <p className="sr-only" role="status">
@@ -395,7 +436,11 @@ export function HomeShell() {
                     </div>
                     <div className={cn('mt-3', TILE_GRID)}>
                       {group.bookmarks.map((bookmark) => (
-                        <BookmarkCard key={bookmark.id} bookmark={bookmark} />
+                        <BookmarkCard
+                          key={bookmark.id}
+                          bookmark={bookmark}
+                          onOpen={handleOpenBookmark}
+                        />
                       ))}
                     </div>
                   </section>
@@ -406,7 +451,11 @@ export function HomeShell() {
             {visible.length > 0 && !grouped && (
               <div className={cn('mt-5', TILE_GRID)}>
                 {visible.map((bookmark) => (
-                  <BookmarkCard key={bookmark.id} bookmark={bookmark} />
+                  <BookmarkCard
+                    key={bookmark.id}
+                    bookmark={bookmark}
+                    onOpen={handleOpenBookmark}
+                  />
                 ))}
               </div>
             )}
@@ -423,7 +472,7 @@ export function HomeShell() {
 
       <footer className="flex shrink-0 items-center justify-center gap-1.5 px-5 pb-8 text-xs text-muted-foreground">
         <LockKeyhole className="size-3.5" />
-        书签读取自浏览器收藏夹，站点不保存任何数据
+        书签与使用记录只留在本地，站点不上传任何数据
       </footer>
 
       <input
@@ -433,6 +482,45 @@ export function HomeShell() {
         hidden
         onChange={handleFile}
       />
+    </div>
+  );
+}
+
+const SORT_OPTIONS = [
+  { value: 'recent', label: '最新', icon: Clock3 },
+  { value: 'frequent', label: '常用', icon: TrendingUp },
+] as const satisfies ReadonlyArray<{ value: SortMode; label: string; icon: typeof Clock3 }>;
+
+function SortToggle({
+  mode,
+  onChange,
+}: {
+  mode: SortMode;
+  onChange: (mode: SortMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="排序方式"
+      className="flex items-center rounded-lg border bg-card p-0.5"
+    >
+      {SORT_OPTIONS.map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          type="button"
+          aria-pressed={mode === value}
+          onClick={() => onChange(value)}
+          className={cn(
+            'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30',
+            mode === value
+              ? 'bg-accent font-medium text-foreground'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Icon className="size-3" />
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

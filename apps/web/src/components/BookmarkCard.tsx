@@ -11,7 +11,13 @@ function hueFor(seed: string): number {
   return MONOGRAM_HUES[Math.abs(hash) % MONOGRAM_HUES.length];
 }
 
-export function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
+export function BookmarkCard({
+  bookmark,
+  onOpen,
+}: {
+  bookmark: Bookmark;
+  onOpen?: (bookmark: Bookmark) => void;
+}) {
   let host = bookmark.url;
   try {
     host = new URL(bookmark.url).hostname.replace(/^www\./, '');
@@ -29,6 +35,10 @@ export function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
       rel="noopener noreferrer"
       style={style}
       title={bookmark.url}
+      onClick={() => onOpen?.(bookmark)}
+      onAuxClick={(event) => {
+        if (event.button === 1) onOpen?.(bookmark);
+      }}
       className="group flex min-w-0 flex-col items-center gap-3 rounded-2xl border bg-card px-4 py-5 text-center shadow-xs transition-[border-color,background-color,box-shadow] duration-200 outline-none hover:border-ring/40 hover:bg-accent/30 hover:shadow-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
     >
       <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[oklch(0.55_0.16_var(--mono)/0.14)] text-[15px] font-semibold text-[oklch(0.45_0.16_var(--mono))] transition-transform duration-200 group-hover:scale-105 dark:bg-[oklch(0.7_0.16_var(--mono)/0.16)] dark:text-[oklch(0.8_0.12_var(--mono))]">

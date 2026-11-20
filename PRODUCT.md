@@ -29,7 +29,8 @@ web
 确认能力：
 
 - 搜索：Google / 百度 / 必应 切换，原生表单 GET 跳转（新标签页），不调用任何搜索 API。
-- 书签：读取浏览器原生收藏夹（仅 http/https），通过 popup 添加/删除/导出 JSON；站点按创建时间倒序展示，显示标题、域名、可选文件夹；浏览器收藏夹发生变化时实时推送到已打开的站点。
+- 书签：读取浏览器原生收藏夹（仅 http/https），通过 popup 添加/删除/导出 JSON；站点默认按创建时间倒序展示，可切换「最新 / 常用」，常用模式按 30 天半衰期的点击加权排序；显示标题、域名、可选文件夹；浏览器收藏夹发生变化时实时推送到已打开的站点。
+- 使用频率：点击书签时按 URL 累加权重并写入 localStorage（未点击的书签按创建时间垫后），排序偏好同样本地记忆；这些记录不上传、不参与同步。
 - 兜底：未检测到插件时展示提示，可通过 JSON 文件导入书签（校验 http(s) URL，过滤非法条目）。
 - 本地传输：站点与 content script 之间使用 window.postMessage 协议（BOOKMARKS_REQUEST / BOOKMARKS_RESPONSE / BOOKMARKS_UPDATED），基于同一页面 origin；content script 通过 background 服务读取 browser.bookmarks。
 
