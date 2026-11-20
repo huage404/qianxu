@@ -10,6 +10,8 @@ const addBtn = document.querySelector<HTMLButtonElement>('#add')!;
 const exportBtn = document.querySelector<HTMLButtonElement>('#export')!;
 
 let statusTimer: number | undefined;
+let pendingRemoveId: string | null = null;
+let pendingRemoveTimer: number | undefined;
 
 function setStatus(text: string) {
   statusEl.textContent = text;
@@ -46,10 +48,28 @@ async function addCurrentPage() {
 async function removeBookmark(id: string) {
   try {
     await browser.bookmarks.remove(id);
+    setStatus('已从浏览器收藏夹删除');
     await render();
   } catch {
     setStatus('删除失败，请重试');
   }
+}
+
+function requestRemove(id: string) {
+  window.clearTimeout(pendingRemoveTimer);
+
+  if (pendingRemoveId === id) {
+    pendingRemoveId = null;
+    void removeBookmark(id);
+    return;
+  }
+
+  pendingRemoveId = id;
+  pendingRemoveTimer = window.setTimeout(() => {
+    pendingRemoveId = null;
+    void render();
+  }, 4000);
+  void render();
 }
 
 function exportBookmarks(bookmarks: Bookmark[]) {
@@ -106,10 +126,12 @@ async function render() {
 
     const remove = document.createElement('button');
     remove.type = 'button';
-    remove.className = 'remove';
-    remove.title = '从浏览器收藏夹删除';
-    remove.textContent = '×';
-    remove.addEventListener('click', () => void removeBookmark(bookmark.id));
+    const pending = pendingRemoveId === bookmark.id;
+    remove.className = pending ? 'remove confirm' : 'remove';
+    remove.title = pending ? '再次点击确认删除' : '从浏览器收藏夹删除';
+    remove.setAttribute('aria-label', remove.title);
+    remove.textContent = pending ? '确认' : '×';
+    remove.addEventListener('click', () => requestRemove(bookmark.id));
 
     item.append(link, remove);
     listEl.append(item);
