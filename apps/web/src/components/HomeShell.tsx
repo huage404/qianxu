@@ -1,0 +1,438 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Bookmark } from '@qianxu/shared';
+import {
+  BookmarkPlus,
+  FileJson,
+  Folder,
+  LockKeyhole,
+  Puzzle,
+  SearchX,
+  TriangleAlert,
+} from 'lucide-react';
+
+import { BookmarkCard } from '@/components/BookmarkCard';
+import { BookmarkFilter } from '@/components/BookmarkFilter';
+import { BookmarksSidebar, type FolderStat } from '@/components/BookmarksSidebar';
+import { EmptyState } from '@/components/EmptyState';
+import { SearchBar } from '@/components/SearchBar';
+import { TopNav } from '@/components/TopNav';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { requestBookmarks, subscribeBookmarks } from '@/lib/bridge';
+import { parseBookmarksJson } from '@/lib/import';
+import { cn } from '@/lib/utils';
+
+type Status = 'checking' | 'connected' | 'absent';
+
+const ALL_FOLDERS = '__all__';
+const UNGROUPED_KEY = '__ungrouped__';
+const TILE_GRID = 'grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4';
+
+interface BookmarkGroup {
+  key: string;
+  label: string;
+  bookmarks: Bookmark[];
+}
+
+function sortByNewest(list: Bookmark[]): Bookmark[] {
+  return [...list].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function folderPathOf(bookmark: Bookmark): string[] {
+  if (bookmark.folderPath?.length) return bookmark.folderPath;
+  return bookmark.folder ? [bookmark.folder] : [];
+}
+
+function folderKeyOf(bookmark: Bookmark): string {
+  return folderPathOf(bookmark)[0] ?? UNGROUPED_KEY;
+}
+
+function folderLabelOf(key: string): string {
+  return key === UNGROUPED_KEY ? '未分组' : key;
+}
+
+function buildFolderStats(list: Bookmark[]): FolderStat[] {
+  const counts = new Map<string, number>();
+
+  for (const bookmark of list) {
+    const key = folderKeyOf(bookmark);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return [...counts]
+    .map(([key, count]) => ({ key, label: folderLabelOf(key), count }))
+    .sort((a, b) => {
+      if (a.key === UNGROUPED_KEY) return 1;
+      if (b.key === UNGROUPED_KEY) return -1;
+      return a.label.localeCompare(b.label, 'zh-Hans-CN');
+    });
+}
+
+function groupByFolder(list: Bookmark[]): BookmarkGroup[] {
+  const groups = new Map<string, BookmarkGroup>();
+
+  for (const bookmark of list) {
+    const key = folderKeyOf(bookmark);
+    const group = groups.get(key);
+    if (group) {
+      group.bookmarks.push(bookmark);
+    } else {
+      groups.set(key, {
+        key,
+        label: folderLabelOf(key),
+        bookmarks: [bookmark],
+      });
+    }
+  }
+
+  return [...groups.values()].sort((a, b) => {
+    if (a.key === UNGROUPED_KEY) return 1;
+    if (b.key === UNGROUPED_KEY) return -1;
+    return a.label.localeCompare(b.label, 'zh-Hans-CN');
+  });
+}
+
+function matchesQuery(bookmark: Bookmark, query: string): boolean {
+  if (!query) return true;
+  const haystack = [bookmark.title, bookmark.url, ...folderPathOf(bookmark)]
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+export function HomeShell() {
+  const [status, setStatus] = useState<Status>('checking');
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [fromFile, setFromFile] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [activeFolder, setActiveFolder] = useState<string>(ALL_FOLDERS);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const desktopFilterRef = useRef<HTMLInputElement>(null);
+  const mobileFilterRef = useRef<HTMLInputElement>(null);
+
+  const loadFromExtension = useCallback(async () => {
+    setStatus('checking');
+    setImportError(null);
+    const result = await requestBookmarks();
+    if (result === null) {
+      setStatus('absent');
+      return;
+    }
+    setStatus('connected');
+    setFromFile(false);
+    setBookmarks(sortByNewest(result));
+  }, []);
+
+  useEffect(() => {
+    void loadFromExtension();
+    return subscribeBookmarks((next) => {
+      setStatus('connected');
+      setFromFile(false);
+      setImportError(null);
+      setBookmarks(sortByNewest(next));
+    });
+  }, [loadFromExtension]);
+
+  const folders = useMemo(() => buildFolderStats(bookmarks), [bookmarks]);
+
+  useEffect(() => {
+    if (activeFolder !== ALL_FOLDERS && !folders.some((folder) => folder.key === activeFolder)) {
+      setActiveFolder(ALL_FOLDERS);
+    }
+  }, [folders, activeFolder]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const visible = useMemo(() => {
+    const scoped =
+      activeFolder === ALL_FOLDERS
+        ? bookmarks
+        : bookmarks.filter((bookmark) => folderKeyOf(bookmark) === activeFolder);
+    if (!normalizedQuery) return scoped;
+    return scoped.filter((bookmark) => matchesQuery(bookmark, normalizedQuery));
+  }, [bookmarks, activeFolder, normalizedQuery]);
+
+  const grouped = activeFolder === ALL_FOLDERS && !normalizedQuery;
+  const groups = useMemo(() => (grouped ? groupByFolder(visible) : []), [grouped, visible]);
+
+  const total = bookmarks.length;
+  const checking = status === 'checking';
+  const isEmpty = total === 0;
+  const filteredEmpty = !isEmpty && visible.length === 0;
+  const activeFolderLabel =
+    activeFolder === ALL_FOLDERS ? '全部书签' : folderLabelOf(activeFolder);
+
+  const openFilePicker = () => fileInputRef.current?.click();
+
+  const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const parsed = parseBookmarksJson(await file.text());
+    if (!parsed) {
+      setImportError('无法解析书签文件，请确认是 JSON 格式且包含有效的 http(s) 链接。');
+      return;
+    }
+    setImportError(null);
+    setFromFile(true);
+    setQuery('');
+    setActiveFolder(ALL_FOLDERS);
+    setBookmarks(sortByNewest(parsed));
+  };
+
+  const clearFilters = () => {
+    setQuery('');
+    setActiveFolder(ALL_FOLDERS);
+  };
+
+  useEffect(() => {
+    const focusFilter = () => {
+      const desktop = desktopFilterRef.current;
+      const target =
+        desktop && desktop.offsetParent !== null ? desktop : mobileFilterRef.current;
+      if (!target) return false;
+      target.focus();
+      target.select();
+      return true;
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        focusFilter();
+        return;
+      }
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (typing) return;
+      if (focusFilter()) event.preventDefault();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const liveMessage = checking
+    ? '正在检测书签插件…'
+    : fromFile
+      ? `已从文件导入 ${total} 个书签`
+      : status === 'connected'
+        ? normalizedQuery
+          ? `筛选出 ${visible.length} 个书签`
+          : `已加载 ${total} 个收藏`
+        : '未检测到书签插件';
+
+  return (
+    <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
+      <TopNav
+        query={query}
+        onQueryChange={setQuery}
+        filterRef={desktopFilterRef}
+        onImport={openFilePicker}
+        onRefresh={loadFromExtension}
+        checking={checking}
+      />
+
+      <div className="relative mx-auto flex w-full max-w-[1200px] flex-1 flex-col px-5 sm:px-8 lg:min-h-0 lg:flex-row lg:gap-10 lg:overflow-hidden">
+        {total > 0 && (
+          <BookmarksSidebar
+            folders={folders}
+            total={total}
+            activeFolder={activeFolder}
+            onSelectFolder={setActiveFolder}
+            allKey={ALL_FOLDERS}
+          />
+        )}
+
+        <main className="min-w-0 flex-1 pt-10 pb-14 sm:pt-12 lg:h-full lg:overflow-y-auto lg:pt-10 lg:pb-10">
+          <div className="mx-auto w-full max-w-2xl">
+            <SearchBar />
+          </div>
+
+          <section className="mt-12 sm:mt-14" aria-label="书签">
+            {total > 0 && (
+              <div className="flex items-center gap-2 lg:hidden">
+                <BookmarkFilter
+                  value={query}
+                  onChange={setQuery}
+                  inputRef={mobileFilterRef}
+                  className="min-w-0 flex-1"
+                />
+                <Select value={activeFolder} onValueChange={setActiveFolder}>
+                  <SelectTrigger
+                    aria-label="选择文件夹"
+                    className="h-9 w-[132px] shrink-0 text-[13px]"
+                  >
+                    <SelectValue className="truncate" />
+                  </SelectTrigger>
+                  <SelectContent align="end" className="max-w-[240px]">
+                    <SelectItem value={ALL_FOLDERS}>全部书签</SelectItem>
+                    {folders.map((folder) => (
+                      <SelectItem key={folder.key} value={folder.key}>
+                        {folder.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="mt-6 flex items-baseline justify-between gap-3 lg:mt-0">
+              <h2 className="text-[13px] font-medium text-muted-foreground">
+                {activeFolderLabel}
+              </h2>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {normalizedQuery || activeFolder !== ALL_FOLDERS
+                  ? `${visible.length} / ${total} 个`
+                  : `${total} 个`}
+              </span>
+            </div>
+
+            <p className="sr-only" role="status">
+              {liveMessage}
+            </p>
+
+            {importError && (
+              <div
+                role="alert"
+                className="mt-5 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/8 px-4 py-3 text-[13px] leading-relaxed text-destructive"
+              >
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                <p>{importError}</p>
+              </div>
+            )}
+
+            {checking && isEmpty && (
+              <div className={cn('mt-5', TILE_GRID)} aria-hidden>
+                {Array.from({ length: 8 }, (_, index) => (
+                  <div
+                    key={index}
+                    className="flex flex-col items-center gap-3 rounded-2xl border bg-card px-4 py-5 shadow-xs"
+                  >
+                    <Skeleton className="size-10 shrink-0 rounded-xl" />
+                    <div className="flex w-full flex-col items-center gap-1.5">
+                      <Skeleton className="h-3.5 w-3/5" />
+                      <Skeleton className="h-3 w-2/5" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {status === 'absent' && isEmpty && (
+              <div className="mt-6">
+                <EmptyState
+                  icon={Puzzle}
+                  title="未检测到书签插件"
+                  description="安装配套插件后点「重新检测」，或先导入已导出的 JSON 文件。"
+                >
+                  <Button size="sm" onClick={loadFromExtension}>
+                    重新检测
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={openFilePicker}>
+                    <FileJson className="size-3.5" />
+                    导入 JSON
+                  </Button>
+                </EmptyState>
+              </div>
+            )}
+
+            {status === 'connected' && isEmpty && (
+              <div className="mt-6">
+                <EmptyState
+                  icon={BookmarkPlus}
+                  title="浏览器收藏夹还是空的"
+                  description="在浏览器里收藏任意网页后，回到这里就会看到。"
+                />
+              </div>
+            )}
+
+            {filteredEmpty && (
+              <div className="mt-6">
+                <EmptyState
+                  icon={SearchX}
+                  title="没有匹配的书签"
+                  description="换个关键词，或清除筛选看看全部书签。"
+                >
+                  <Button size="sm" variant="outline" onClick={clearFilters}>
+                    清除筛选
+                  </Button>
+                </EmptyState>
+              </div>
+            )}
+
+            {visible.length > 0 && grouped && (
+              <div className="mt-5 space-y-8">
+                {groups.map((group) => (
+                  <section key={group.key} aria-label={group.label}>
+                    <div className="flex items-baseline gap-2">
+                      <h3 className="flex items-center gap-1.5 text-[13px] font-medium">
+                        <Folder className="size-3.5 text-muted-foreground" />
+                        {group.label}
+                      </h3>
+                      <span className="text-[11px] tabular-nums text-muted-foreground">
+                        {group.bookmarks.length}
+                      </span>
+                    </div>
+                    <div className={cn('mt-3', TILE_GRID)}>
+                      {group.bookmarks.map((bookmark) => (
+                        <BookmarkCard key={bookmark.id} bookmark={bookmark} />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+
+            {visible.length > 0 && !grouped && (
+              <div className={cn('mt-5', TILE_GRID)}>
+                {visible.map((bookmark) => (
+                  <BookmarkCard key={bookmark.id} bookmark={bookmark} />
+                ))}
+              </div>
+            )}
+
+            {fromFile && (
+              <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <FileJson className="size-3.5" />
+                当前列表来自导入文件；点右上角「刷新」会切换为浏览器收藏夹。
+              </p>
+            )}
+          </section>
+        </main>
+      </div>
+
+      <footer className="flex shrink-0 items-center justify-center gap-1.5 px-5 pb-8 text-xs text-muted-foreground">
+        <LockKeyhole className="size-3.5" />
+        书签读取自浏览器收藏夹，站点不保存任何数据
+      </footer>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={handleFile}
+      />
+    </div>
+  );
+}

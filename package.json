@@ -1,0 +1,11 @@
+{
+  "name": "qianxu",
+  "private": true,
+  "packageManager": "pnpm@10.20.0",
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "dev:ext": "pnpm --filter extension dev",
+    "build": "pnpm -r build",
+    "zip:ext": "pnpm --filter extension zip"
+  }
+}

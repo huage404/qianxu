@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.wxt/
+.output/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+.impeccable/review/

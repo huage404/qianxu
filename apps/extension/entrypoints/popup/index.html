@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Qianxu 书签</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>Qianxu 书签</h1>
+      <span id="count" class="count"></span>
+    </header>
+    <div class="actions">
+      <button id="add" type="button" class="primary">收藏当前页</button>
+      <button id="export" type="button">导出 JSON</button>
+    </div>
+    <p id="status" class="status"></p>
+    <ul id="list" class="list"></ul>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
