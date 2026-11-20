@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import { ListFilter, X } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,18 @@ interface BookmarkFilterProps {
   className?: string;
 }
 
+function shortcutLabel(): string {
+  if (typeof navigator === 'undefined') return 'Ctrl K';
+  const platform = navigator.platform || navigator.userAgent;
+  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
+}
+
 export function BookmarkFilter({ value, onChange, inputRef, className }: BookmarkFilterProps) {
+  // 先按非 Mac 渲染，挂载后再按平台修正，避免服务端与客户端不一致
+  const [shortcut, setShortcut] = useState('Ctrl K');
+
+  useEffect(() => setShortcut(shortcutLabel()), []);
+
   return (
     <div className={cn('relative', className)}>
       <ListFilter className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -29,7 +40,7 @@ export function BookmarkFilter({ value, onChange, inputRef, className }: Bookmar
         aria-label="筛选书签"
         autoComplete="off"
         spellCheck={false}
-        className="h-9 rounded-lg border-transparent bg-muted/50 pr-8 pl-8 text-[13px] shadow-none focus-visible:bg-card sm:pr-12"
+        className="h-9 rounded-lg border-transparent bg-muted/50 pr-8 pl-8 text-[13px] shadow-none focus-visible:bg-card sm:pr-14"
       />
       {value ? (
         <button
@@ -42,7 +53,7 @@ export function BookmarkFilter({ value, onChange, inputRef, className }: Bookmar
         </button>
       ) : (
         <kbd className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border bg-muted px-1.5 py-0.5 font-sans text-[10px] leading-4 font-medium text-muted-foreground sm:block">
-          ⌘K
+          {shortcut}
         </kbd>
       )}
     </div>
