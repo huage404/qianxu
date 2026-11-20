@@ -8,7 +8,18 @@ export const EXT_MSG_BOOKMARKS_CHANGED = 'qianxu:bookmarks-changed';
 
 export async function listBrowserBookmarks(): Promise<Bookmark[]> {
   const tree = await browser.bookmarks.getTree();
-  return flattenBookmarkTree(tree);
+  return withFavicons(flattenBookmarkTree(tree));
+}
+
+function withFavicons(bookmarks: Bookmark[]): Bookmark[] {
+  if (import.meta.env.BROWSER !== 'chrome') return bookmarks;
+  // WXT 把 getURL 的参数收窄为 public 目录下的路径，_favicon 是浏览器内置路径
+  const getURL = browser.runtime.getURL as (path: string) => string;
+  return bookmarks.map((bookmark) => ({
+    ...bookmark,
+    // Chrome 的 _favicon API 返回本地缓存的图标，页面加载时不会访问外网
+    faviconUrl: getURL(`/_favicon/?pageUrl=${encodeURIComponent(bookmark.url)}&size=64`),
+  }));
 }
 
 type BookmarkEvent = {

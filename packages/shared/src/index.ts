@@ -6,6 +6,8 @@ export interface Bookmark {
   /** 浏览器默认容器（书签栏、其他书签等）之下的完整文件夹路径 */
   folderPath?: string[];
   createdAt: number;
+  /** Chrome 扩展提供的 favicon 地址，由页面直接渲染 */
+  faviconUrl?: string;
 }
 
 export const BOOKMARKS_STORAGE_KEY = 'bookmarks';
