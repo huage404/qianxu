@@ -20,6 +20,7 @@ import { BookmarksSidebar, type FolderStat } from '@/components/BookmarksSidebar
 import { EmptyState } from '@/components/EmptyState';
 import { SearchBar } from '@/components/SearchBar';
 import { TopNav } from '@/components/TopNav';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -43,7 +44,7 @@ import {
 } from '@/lib/usage';
 import { cn } from '@/lib/utils';
 
-type Status = 'checking' | 'connected' | 'absent';
+type Status = 'checking' | 'connected' | 'absent' | 'error';
 
 const ALL_FOLDERS = '__all__';
 const UNGROUPED_KEY = '__ungrouped__';
@@ -128,6 +129,7 @@ export function HomeShell() {
   const [clickStats, setClickStats] = useState<ClickStats>({});
 
   const clickStatsRef = useRef<ClickStats>({});
+  const fromFileRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const desktopFilterRef = useRef<HTMLInputElement>(null);
   const mobileFilterRef = useRef<HTMLInputElement>(null);
@@ -143,22 +145,28 @@ export function HomeShell() {
     setStatus('checking');
     setImportError(null);
     const result = await requestBookmarks();
-    if (result === null) {
-      setStatus('absent');
+    if (result.status !== 'ok') {
+      setStatus(result.status);
       return;
     }
     setStatus('connected');
     setFromFile(false);
-    setBookmarks(result);
+    fromFileRef.current = false;
+    setBookmarks(result.bookmarks);
   }, []);
 
   useEffect(() => {
     void loadFromExtension();
-    return subscribeBookmarks((next) => {
+    return subscribeBookmarks((update) => {
+      // 浏览文件导入的数据时，不让后台推送悄悄替换当前列表
+      if (fromFileRef.current) return;
+      if (!update.ok) {
+        setStatus('error');
+        return;
+      }
       setStatus('connected');
-      setFromFile(false);
       setImportError(null);
-      setBookmarks(next);
+      setBookmarks(update.bookmarks);
     });
   }, [loadFromExtension]);
 
@@ -191,6 +199,10 @@ export function HomeShell() {
   const groups = useMemo(() => (grouped ? groupByFolder(visible) : []), [grouped, visible]);
 
   const total = bookmarks.length;
+  const hasClickData = useMemo(
+    () => bookmarks.some((bookmark) => clickStats[bookmark.url] !== undefined),
+    [bookmarks, clickStats],
+  );
   const checking = status === 'checking';
   const isEmpty = total === 0;
   const filteredEmpty = !isEmpty && visible.length === 0;
@@ -211,6 +223,7 @@ export function HomeShell() {
     }
     setImportError(null);
     setFromFile(true);
+    fromFileRef.current = true;
     setQuery('');
     setActiveFolder(ALL_FOLDERS);
     setBookmarks(parsed);
@@ -275,7 +288,9 @@ export function HomeShell() {
         ? normalizedQuery
           ? `筛选出 ${visible.length} 个书签`
           : `已加载 ${total} 个收藏`
-        : '未检测到书签插件';
+        : status === 'error'
+          ? '读取浏览器收藏夹失败'
+          : '未检测到书签插件';
 
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
@@ -340,6 +355,14 @@ export function HomeShell() {
                 {total > 0 && (
                   <SortToggle mode={sortMode} onChange={handleSortModeChange} />
                 )}
+                {fromFile && (
+                  <Badge
+                    variant="outline"
+                    className="border-dashed px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+                  >
+                    来自文件
+                  </Badge>
+                )}
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {normalizedQuery || activeFolder !== ALL_FOLDERS
                     ? `${visible.length} / ${total} 个`
@@ -352,6 +375,12 @@ export function HomeShell() {
               {liveMessage}
             </p>
 
+            {sortMode === 'frequent' && total > 0 && !hasClickData && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                常用排序按点击次数计算，打开几个书签后就会生效。
+              </p>
+            )}
+
             {importError && (
               <div
                 role="alert"
@@ -359,6 +388,40 @@ export function HomeShell() {
               >
                 <TriangleAlert className="mt-0.5 size-4 shrink-0" />
                 <p>{importError}</p>
+              </div>
+            )}
+
+            {status === 'error' && total > 0 && !fromFile && (
+              <div
+                role="alert"
+                className="mt-5 flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/8 px-4 py-3 text-[13px] leading-relaxed text-destructive"
+              >
+                <TriangleAlert className="size-4 shrink-0" />
+                <p className="min-w-0 flex-1">读取浏览器收藏夹失败，当前显示上次加载的数据。</p>
+                <button
+                  type="button"
+                  onClick={loadFromExtension}
+                  className="shrink-0 rounded-md border border-destructive/30 px-2 py-0.5 text-[12px] font-medium transition-colors hover:bg-destructive/10 focus-visible:ring-[3px] focus-visible:ring-destructive/30 focus-visible:outline-none"
+                >
+                  重试
+                </button>
+              </div>
+            )}
+
+            {status === 'absent' && total > 0 && !fromFile && (
+              <div
+                role="status"
+                className="mt-5 flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[13px] leading-relaxed text-amber-700 dark:text-amber-400"
+              >
+                <TriangleAlert className="size-4 shrink-0" />
+                <p className="min-w-0 flex-1">未检测到书签插件，当前显示上次加载的数据。</p>
+                <button
+                  type="button"
+                  onClick={loadFromExtension}
+                  className="shrink-0 rounded-md border border-amber-500/30 px-2 py-0.5 text-[12px] font-medium transition-colors hover:bg-amber-500/10 focus-visible:ring-[3px] focus-visible:ring-amber-500/30 focus-visible:outline-none"
+                >
+                  重新检测
+                </button>
               </div>
             )}
 
@@ -388,6 +451,24 @@ export function HomeShell() {
                 >
                   <Button size="sm" onClick={loadFromExtension}>
                     重新检测
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={openFilePicker}>
+                    <FileJson className="size-3.5" />
+                    导入 JSON
+                  </Button>
+                </EmptyState>
+              </div>
+            )}
+
+            {status === 'error' && isEmpty && (
+              <div className="mt-6">
+                <EmptyState
+                  icon={TriangleAlert}
+                  title="读取浏览器收藏夹失败"
+                  description="插件已连接，但读取收藏夹时出错。可以重试，或先导入 JSON 文件查看。"
+                >
+                  <Button size="sm" onClick={loadFromExtension}>
+                    重试
                   </Button>
                   <Button size="sm" variant="outline" onClick={openFilePicker}>
                     <FileJson className="size-3.5" />
@@ -461,9 +542,8 @@ export function HomeShell() {
             )}
 
             {fromFile && (
-              <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <FileJson className="size-3.5" />
-                当前列表来自导入文件；点右上角「刷新」会切换为浏览器收藏夹。
+              <p className="mt-4 text-xs text-muted-foreground">
+                点右上角「刷新」可切换回浏览器收藏夹。
               </p>
             )}
           </section>
