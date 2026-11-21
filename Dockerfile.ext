@@ -1,0 +1,23 @@
+FROM node:22-slim AS base
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH
+RUN npm i -g pnpm@10.20.0
+WORKDIR /repo
+
+FROM base AS deps
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json ./apps/web/
+COPY apps/extension/package.json ./apps/extension/
+COPY packages/shared/package.json ./packages/shared/
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter extension...
+
+FROM deps AS build
+COPY . .
+ARG WXT_SITE_ORIGINS
+RUN test -n "$WXT_SITE_ORIGINS" || (echo "缺少 WXT_SITE_ORIGINS，例：--build-arg WXT_SITE_ORIGINS=https://你的域名" && exit 1)
+ENV WXT_SITE_ORIGINS=${WXT_SITE_ORIGINS}
+RUN pnpm --filter extension exec wxt prepare \
+ && pnpm --filter extension zip
+
+FROM scratch AS ext
+COPY --from=build /repo/apps/extension/.output /ext

@@ -38,7 +38,8 @@ qianxu/
 │     │  └─ popup/              收藏、删除、导出
 │     └─ utils/                 书签扁平化、origin 白名单
 ├─ packages/shared/             书签类型、消息协议与类型守卫
-├─ Dockerfile                   网页端镜像（含扩展打包 stage）
+├─ Dockerfile                   网页端镜像
+├─ Dockerfile.ext               扩展 zip 打包（可选，与网页端部署无关）
 ├─ docker-compose.yml
 └─ pnpm-workspace.yaml
 ```
@@ -136,15 +137,16 @@ pnpm --filter extension build
 docker compose up -d --build
 
 # 只构建镜像
-docker build --target runner -t qianxu-web .
+docker build -t qianxu-web .
 ```
 
 镜像说明（`Dockerfile`）：
 
-- `deps`：只拷贝各 package.json 安装依赖，利用层缓存。
+- `deps`：只拷贝各 package.json 并只安装网页端依赖（`--filter web...`），扩展的依赖不参与部署。
 - `build`：执行 `pnpm --filter web build`，产物为 standalone。
 - `runner`：基于 `node:22-slim`，只保留 `.next/standalone` 与 `.next/static`，以非 root 用户运行，监听 `3000`。
-- `ext-build` / `ext`：扩展打包 stage，见下文。
+
+扩展打包拆在独立的 `Dockerfile.ext` 里，网页端构建不会触碰它；旧版 Docker 构建器会执行 Dockerfile 中的所有 stage，这也是两者必须分开的原因。
 
 `docker-compose.yml` 默认把容器端口绑定到 `127.0.0.1:3000`，只对本机开放。生产环境在容器前加反向代理（Nginx / OpenResty / Caddy 等），由代理终止 TLS 并对外提供域名访问。
 
@@ -166,10 +168,10 @@ WXT_SITE_ORIGINS="https://你的域名" pnpm --filter extension build
 pnpm zip:ext   # 产物：apps/extension/.output/extension-<version>-chrome.zip
 ```
 
-也可以用 Docker 的 `ext` stage 构建，产物直接导出到本地目录：
+也可以用 Docker 的 `Dockerfile.ext` 构建，产物直接导出到本地目录：
 
 ```bash
-docker build --target ext --output type=local,dest=./dist/ext \
+docker build -f Dockerfile.ext --target ext --output type=local,dest=./dist/ext \
   --build-arg WXT_SITE_ORIGINS="https://你的域名" .
 # 产物：dist/ext/ext/extension-<version>-chrome.zip
 ```

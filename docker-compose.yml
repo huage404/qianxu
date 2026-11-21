@@ -2,7 +2,6 @@ services:
   web:
     build:
       context: .
-      target: runner
     image: qianxu-web:latest
     container_name: qianxu-web
     restart: unless-stopped
