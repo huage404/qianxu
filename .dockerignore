@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+.next
+**/.next
+.wxt
+**/.wxt
+.output
+**/.output
+dist
+*.tsbuildinfo
+.DS_Store
+.git
+.env
+.env.*
+.impeccable
+.qoder
