@@ -6,4 +6,4 @@ services:
     container_name: qianxu-web
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:17871:3000"

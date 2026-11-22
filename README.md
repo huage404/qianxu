@@ -140,6 +140,8 @@ docker compose up -d --build
 docker build -t qianxu-web .
 ```
 
+启动后访问 `http://localhost:17871`。宿主机端口只在 `docker-compose.yml` 的 `ports` 中配置，容器内部仍监听 `3000`，两者互不影响。若要在本机 Docker 环境下使用扩展桥接，构建扩展时需把 `WXT_SITE_ORIGINS` 设为 `http://localhost:17871`。
+
 镜像说明（`Dockerfile`）：
 
 - `deps`：只拷贝各 package.json 并只安装网页端依赖（`--filter web...`），扩展的依赖不参与部署。
@@ -148,7 +150,7 @@ docker build -t qianxu-web .
 
 扩展打包拆在独立的 `Dockerfile.ext` 里，网页端构建不会触碰它；旧版 Docker 构建器会执行 Dockerfile 中的所有 stage，这也是两者必须分开的原因。
 
-`docker-compose.yml` 默认把容器端口绑定到 `127.0.0.1:3000`，只对本机开放。生产环境在容器前加反向代理（Nginx / OpenResty / Caddy 等），由代理终止 TLS 并对外提供域名访问。
+`docker-compose.yml` 默认把容器端口绑定到 `127.0.0.1:17871`（容器内部仍是 `3000`），只对本机开放。生产环境在容器前加反向代理（Nginx / OpenResty / Caddy 等），由代理终止 TLS 并对外提供域名访问。
 
 更新：
 
@@ -181,7 +183,7 @@ docker build -f Dockerfile.ext --target ext --output type=local,dest=./dist/ext 
 ### 生产域名的设置位置
 
 1. **DNS**：域名 A 记录指向服务器。
-2. **反向代理**：绑定域名、配置证书并强制 HTTPS，转发到 `127.0.0.1:3000`。
+2. **反向代理**：绑定域名、配置证书并强制 HTTPS，转发到 `127.0.0.1:17871`。
 3. **扩展构建**：`WXT_SITE_ORIGINS` 填入同一个 origin；主域与 `www` 都使用时一并写入，逗号分隔。
 
 ## 提交与协作
