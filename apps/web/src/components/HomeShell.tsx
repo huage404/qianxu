@@ -118,7 +118,11 @@ function matchesQuery(bookmark: Bookmark, query: string): boolean {
   return haystack.includes(query);
 }
 
-export function HomeShell() {
+interface HomeShellProps {
+  icpNumber?: string;
+}
+
+export function HomeShell({ icpNumber }: HomeShellProps) {
   const [status, setStatus] = useState<Status>('checking');
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [fromFile, setFromFile] = useState(false);
@@ -550,9 +554,21 @@ export function HomeShell() {
         </main>
       </div>
 
-      <footer className="flex shrink-0 items-center justify-center gap-1.5 px-5 pb-8 text-xs text-muted-foreground">
-        <LockKeyhole className="size-3.5" />
-        书签与使用记录只留在本地，站点不上传任何数据
+      <footer className="flex shrink-0 flex-col items-center justify-center gap-1 px-5 pb-8 text-xs text-muted-foreground">
+        <p className="flex items-center gap-1.5">
+          <LockKeyhole className="size-3.5" />
+          书签与使用记录只留在本地，站点不上传任何数据
+        </p>
+        {icpNumber && (
+          <a
+            href="https://beian.miit.gov.cn/"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-sm underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30 focus-visible:outline-none"
+          >
+            {icpNumber}
+          </a>
+        )}
       </footer>
 
       <input

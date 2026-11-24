@@ -125,19 +125,23 @@ pnpm --filter extension build
 | 变量 | 作用域 | 说明 |
 | --- | --- | --- |
 | `WXT_SITE_ORIGINS` | 扩展构建期 | 允许通信的站点 origin，逗号分隔，需含协议（443 不必写端口）。未设置时回退为 `http://localhost:3000`、`http://127.0.0.1:3000` |
+| `ICP_NUMBER` | 网页构建期 | 网站 ICP 备案号，显示在页脚并链接到工信部备案系统；未设置则不显示。仓库不保存备案号，需自行通过环境变量提供 |
 
-该变量会被写入 content script 的 `matches`、运行时 origin 校验和 Chrome 的 `web_accessible_resources`，因此**只在构建时生效**，运行期无法修改。默认白名单见 `apps/extension/utils/site-config.ts`。
+`WXT_SITE_ORIGINS` 会被写入 content script 的 `matches`、运行时 origin 校验和 Chrome 的 `web_accessible_resources`，因此**只在构建时生效**，运行期无法修改。默认白名单见 `apps/extension/utils/site-config.ts`。
+
+`ICP_NUMBER` 在网页构建时写入预渲染的 HTML，本地开发可放在 `apps/web/.env.local`，Docker 部署见下方说明，同样**修改后需要重新构建**。
 
 ## 构建与部署
 
 ### 网页端（Docker）
 
 ```bash
-# 构建并启动
+# 构建并启动（备案号等站点信息放在仓库外的 .env 中）
+cp .env.example .env
 docker compose up -d --build
 
 # 只构建镜像
-docker build -t qianxu-web .
+docker build --build-arg ICP_NUMBER="湘ICP备xxxxxxxx号" -t qianxu-web .
 ```
 
 启动后访问 `http://localhost:17871`。宿主机端口只在 `docker-compose.yml` 的 `ports` 中配置，容器内部仍监听 `3000`，两者互不影响。若要在本机 Docker 环境下使用扩展桥接，构建扩展时需把 `WXT_SITE_ORIGINS` 设为 `http://localhost:17871`。

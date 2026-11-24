@@ -15,6 +15,9 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --filter web...
 
 FROM deps AS build
 COPY . .
+# 备案号等站点信息只在构建期读取，未传入时页面对应位置留空
+ARG ICP_NUMBER=
+ENV ICP_NUMBER=${ICP_NUMBER}
 RUN pnpm --filter web build
 
 FROM node:22-slim AS runner

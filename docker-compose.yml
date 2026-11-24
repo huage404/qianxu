@@ -2,6 +2,8 @@ services:
   web:
     build:
       context: .
+      args:
+        ICP_NUMBER: ${ICP_NUMBER:-}
     image: qianxu-web:latest
     container_name: qianxu-web
     restart: unless-stopped
