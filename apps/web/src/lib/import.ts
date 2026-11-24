@@ -1,5 +1,7 @@
 import { isHttpUrl, type Bookmark } from '@qianxu/shared';
 
+import { createId } from '@/lib/id';
+
 export function parseBookmarksJson(text: string): Bookmark[] | null {
   let data: unknown;
   try {
@@ -35,7 +37,7 @@ export function parseBookmarksJson(text: string): Bookmark[] | null {
         : folderPath[folderPath.length - 1];
 
     bookmarks.push({
-      id: typeof item.id === 'string' && item.id ? item.id : crypto.randomUUID(),
+      id: typeof item.id === 'string' && item.id ? item.id : createId(),
       title:
         typeof item.title === 'string' && item.title.trim() ? item.title.trim() : item.url,
       url: item.url,

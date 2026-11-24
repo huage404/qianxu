@@ -7,6 +7,8 @@ import {
   type WebToExtensionMessage,
 } from '@qianxu/shared';
 
+import { createId } from '@/lib/id';
+
 const DEFAULT_TIMEOUT_MS = 800;
 
 export type BookmarksResult =
@@ -21,7 +23,7 @@ export interface BookmarksUpdate {
 
 function requestOnce(timeoutMs: number): Promise<BookmarksResponse | null> {
   return new Promise((resolve) => {
-    const requestId = crypto.randomUUID();
+    const requestId = createId();
 
     const cleanup = () => {
       window.removeEventListener('message', onMessage);
