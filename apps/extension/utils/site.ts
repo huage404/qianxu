@@ -1,7 +1,6 @@
-// 站点 origin 的唯一配置源。
-// 生产构建通过 WXT_SITE_ORIGINS 注入，逗号分隔的完整 origin（含端口）：
-//   WXT_SITE_ORIGINS="https://qianxu.app,https://www.qianxu.app" pnpm build
-// 未设置时回退到本地开发地址。
+// 站点 origin 的唯一配置源，取值来自构建期的 WXT_SITE_ORIGINS
+// （仓库根目录的 .env，或命令行传入；逗号分隔的完整 origin，含协议、443 不写端口）。
+// 开发构建未设置时回退到本地开发地址；生产构建缺它会直接构建失败。
 import { buildMatchPatterns, parseSiteOrigins } from '@/utils/site-config';
 
 export const SITE_ORIGINS: readonly string[] = parseSiteOrigins(

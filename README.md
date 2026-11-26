@@ -122,14 +122,18 @@ pnpm --filter extension build
 
 ### 环境变量
 
+全站只有一个配置文件：仓库根目录的 `.env`（模板 `.env.example`，用 `cp .env.example .env` 生成）。本地开发、网页构建、docker compose 与扩展打包都读它，`apps/*` 下不要再放 `.env` / `.env.local`，以免出现两个来源。
+
 | 变量 | 作用域 | 说明 |
 | --- | --- | --- |
-| `WXT_SITE_ORIGINS` | 扩展构建期 | 允许通信的站点 origin，逗号分隔，需含协议（443 不必写端口）。未设置时回退为 `http://localhost:3000`、`http://127.0.0.1:3000` |
-| `ICP_NUMBER` | 网页构建期 | 网站 ICP 备案号，显示在页脚并链接到工信部备案系统；未设置则不显示。仓库不保存备案号，需自行通过环境变量提供 |
+| `WXT_SITE_ORIGINS` | 扩展构建期 | 允许通信的站点 origin，逗号分隔，需含协议（443 不必写端口，带端口的本地地址要写全） |
+| `ICP_NUMBER` | 网页构建期 | 网站 ICP 备案号，显示在页脚并链接到工信部备案系统；留空则不显示 |
 
-`WXT_SITE_ORIGINS` 会被写入 content script 的 `matches`、运行时 origin 校验和 Chrome 的 `web_accessible_resources`，因此**只在构建时生效**，运行期无法修改。默认白名单见 `apps/extension/utils/site-config.ts`。
+两个 config 会自己向上找到 workspace 根并加载这份 `.env`（见 `apps/web/next.config.ts`、`apps/extension/wxt.config.ts`），命令行传入的同名变量优先级更高，适合 CI 临时覆盖。
 
-`ICP_NUMBER` 在网页构建时写入预渲染的 HTML，本地开发可放在 `apps/web/.env.local`，Docker 部署见下方说明，同样**修改后需要重新构建**。
+`WXT_SITE_ORIGINS` 会被写入 content script 的 `matches`、运行时 origin 校验和 Chrome 的 `web_accessible_resources`，因此**只在构建时生效**，运行期无法修改。生产构建（`wxt build|zip`）漏填该变量会直接报错退出，不会静默打出只认 localhost 的包；开发构建仍回退到 `apps/extension/utils/site-config.ts` 里的本地默认白名单。
+
+`ICP_NUMBER` 在网页构建时写入预渲染的 HTML，同样**修改后需要重新构建**。
 
 ## 构建与部署
 
@@ -144,7 +148,7 @@ docker compose up -d --build
 docker build --build-arg ICP_NUMBER="湘ICP备xxxxxxxx号" -t qianxu-web .
 ```
 
-启动后访问 `http://localhost:17871`。宿主机端口只在 `docker-compose.yml` 的 `ports` 中配置，容器内部仍监听 `3000`，两者互不影响。若要在本机 Docker 环境下使用扩展桥接，构建扩展时需把 `WXT_SITE_ORIGINS` 设为 `http://localhost:17871`。
+启动后访问 `http://localhost:17871`。宿主机端口只在 `docker-compose.yml` 的 `ports` 中配置，容器内部仍监听 `3000`，两者互不影响。若要在本机 Docker 环境下使用扩展桥接，根 `.env` 的 `WXT_SITE_ORIGINS` 里要包含 `http://localhost:17871`。
 
 镜像说明（`Dockerfile`）：
 
@@ -167,18 +171,26 @@ docker compose up -d --build
 
 ### 扩展
 
-生产构建必须传入站点 origin：
+站点 origin 常态放在根目录 `.env`，构建直接读取它：
 
 ```bash
-WXT_SITE_ORIGINS="https://你的域名" pnpm --filter extension build
+# .env
+# WXT_SITE_ORIGINS=https://你的域名,http://localhost:3000,http://127.0.0.1:3000
 pnpm zip:ext   # 产物：apps/extension/.output/extension-<version>-chrome.zip
 ```
 
-也可以用 Docker 的 `Dockerfile.ext` 构建，产物直接导出到本地目录：
+临时改用其他 origin 时用命令行覆盖，命令行优先级高于 `.env`：
 
 ```bash
+WXT_SITE_ORIGINS="https://你的域名" pnpm --filter extension build
+```
+
+也可以用 Docker 的 `Dockerfile.ext` 构建，产物直接导出到本地目录。镜像构建读不到宿主机的 `.env`（`.dockerignore` 已排除），所以把根 `.env` 里的值导出来传给 build arg：
+
+```bash
+set -a; . ./.env; set +a
 docker build -f Dockerfile.ext --target ext --output type=local,dest=./dist/ext \
-  --build-arg WXT_SITE_ORIGINS="https://你的域名" .
+  --build-arg WXT_SITE_ORIGINS="$WXT_SITE_ORIGINS" .
 # 产物：dist/ext/ext/extension-<version>-chrome.zip
 ```
 
@@ -188,7 +200,7 @@ docker build -f Dockerfile.ext --target ext --output type=local,dest=./dist/ext 
 
 1. **DNS**：域名 A 记录指向服务器。
 2. **反向代理**：绑定域名、配置证书并强制 HTTPS，转发到 `127.0.0.1:17871`。
-3. **扩展构建**：`WXT_SITE_ORIGINS` 填入同一个 origin；主域与 `www` 都使用时一并写入，逗号分隔。
+3. **扩展构建**：`WXT_SITE_ORIGINS`（根目录 `.env`）填入同一个 origin；主域与 `www` 都使用时一并写入，逗号分隔。
 
 协议也是 origin 的一部分：站点从 HTTP 切到 HTTPS（或反向代理开启强制 HTTPS）后，白名单必须同步改成 `https://`，否则 content script 不会被注入，页面会一直显示「未检测到书签插件」。同理，证书必须覆盖实际访问的子域名，证书无效时 Chrome 停在告警页，扩展脚本也不会执行。
 
@@ -212,5 +224,5 @@ docker build -f Dockerfile.ext --target ext --output type=local,dest=./dist/ext 
 ## 现状与限制
 
 - 尚未配置单元测试与 lint，目前以类型检查和构建作为主要校验手段。
-- 扩展 content script 默认只匹配本地地址，生产域名需通过构建参数注入。
+- 扩展 content script 的匹配范围由根 `.env` 的 `WXT_SITE_ORIGINS` 在构建期决定，生产构建漏填会直接失败。
 - 云端同步明确不做；是否引入取决于上线后的反馈。
