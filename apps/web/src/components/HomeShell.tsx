@@ -5,6 +5,7 @@ import type { Bookmark } from '@qianxu/shared';
 import {
   BookmarkPlus,
   Clock3,
+  Download,
   FileJson,
   Folder,
   LockKeyhole,
@@ -31,6 +32,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { requestBookmarks, subscribeBookmarks } from '@/lib/bridge';
+import { EXTENSION_DOWNLOAD_URL } from '@/lib/constants';
 import { parseBookmarksJson } from '@/lib/import';
 import {
   loadClickStats,
@@ -453,7 +455,13 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                   title="未检测到书签插件"
                   description="安装配套插件后点「重新检测」，或先导入已导出的 JSON 文件。"
                 >
-                  <Button size="sm" onClick={loadFromExtension}>
+                  <Button size="sm" asChild>
+                    <a href={EXTENSION_DOWNLOAD_URL}>
+                      <Download className="size-3.5" />
+                      安装插件
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={loadFromExtension}>
                     重新检测
                   </Button>
                   <Button size="sm" variant="outline" onClick={openFilePicker}>
