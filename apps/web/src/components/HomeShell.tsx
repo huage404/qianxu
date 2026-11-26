@@ -63,53 +63,60 @@ function folderPathOf(bookmark: Bookmark): string[] {
   return bookmark.folder ? [bookmark.folder] : [];
 }
 
-function folderKeyOf(bookmark: Bookmark): string {
-  return folderPathOf(bookmark)[0] ?? UNGROUPED_KEY;
+/** depth 从 1 开始；书签没深入到该层时归入未分组 */
+function folderKeyAt(bookmark: Bookmark, depth: number): string {
+  return folderPathOf(bookmark)[depth - 1] ?? UNGROUPED_KEY;
 }
 
-function folderLabelOf(key: string): string {
-  return key === UNGROUPED_KEY ? '未分组' : key;
+function folderLabelOf(key: string, ungroupedLabel: string): string {
+  return key === UNGROUPED_KEY ? ungroupedLabel : key;
 }
 
-function buildFolderStats(list: Bookmark[]): FolderStat[] {
+function compareFolders(a: { key: string; label: string }, b: { key: string; label: string }): number {
+  if (a.key === UNGROUPED_KEY) return 1;
+  if (b.key === UNGROUPED_KEY) return -1;
+  return a.label.localeCompare(b.label, 'zh-Hans-CN');
+}
+
+function buildFolderStats(
+  list: Bookmark[],
+  depth: number,
+  ungroupedLabel: string,
+): FolderStat[] {
   const counts = new Map<string, number>();
 
   for (const bookmark of list) {
-    const key = folderKeyOf(bookmark);
+    const key = folderKeyAt(bookmark, depth);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
   return [...counts]
-    .map(([key, count]) => ({ key, label: folderLabelOf(key), count }))
-    .sort((a, b) => {
-      if (a.key === UNGROUPED_KEY) return 1;
-      if (b.key === UNGROUPED_KEY) return -1;
-      return a.label.localeCompare(b.label, 'zh-Hans-CN');
-    });
+    .map(([key, count]) => ({ key, label: folderLabelOf(key, ungroupedLabel), count }))
+    .sort(compareFolders);
 }
 
-function groupByFolder(list: Bookmark[]): BookmarkGroup[] {
+function groupByFolder(
+  list: Bookmark[],
+  depth: number,
+  ungroupedLabel: string,
+): BookmarkGroup[] {
   const groups = new Map<string, BookmarkGroup>();
 
   for (const bookmark of list) {
-    const key = folderKeyOf(bookmark);
+    const key = folderKeyAt(bookmark, depth);
     const group = groups.get(key);
     if (group) {
       group.bookmarks.push(bookmark);
     } else {
       groups.set(key, {
         key,
-        label: folderLabelOf(key),
+        label: folderLabelOf(key, ungroupedLabel),
         bookmarks: [bookmark],
       });
     }
   }
 
-  return [...groups.values()].sort((a, b) => {
-    if (a.key === UNGROUPED_KEY) return 1;
-    if (b.key === UNGROUPED_KEY) return -1;
-    return a.label.localeCompare(b.label, 'zh-Hans-CN');
-  });
+  return [...groups.values()].sort(compareFolders);
 }
 
 function matchesQuery(bookmark: Bookmark, query: string): boolean {
@@ -131,6 +138,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [importError, setImportError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [activeFolder, setActiveFolder] = useState<string>(ALL_FOLDERS);
+  const [activeSubfolder, setActiveSubfolder] = useState<string>(ALL_FOLDERS);
   const [sortMode, setSortMode] = useState<SortMode>('recent');
   const [clickStats, setClickStats] = useState<ClickStats>({});
 
@@ -181,7 +189,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     [bookmarks, sortMode, clickStats],
   );
 
-  const folders = useMemo(() => buildFolderStats(bookmarks), [bookmarks]);
+  const folders = useMemo(() => buildFolderStats(bookmarks, 1, '未分组'), [bookmarks]);
 
   useEffect(() => {
     if (activeFolder !== ALL_FOLDERS && !folders.some((folder) => folder.key === activeFolder)) {
@@ -189,20 +197,52 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     }
   }, [folders, activeFolder]);
 
+  // 一级文件夹内的书签，用于二级统计与二级筛选
+  const folderScoped = useMemo(
+    () =>
+      activeFolder === ALL_FOLDERS
+        ? bookmarks
+        : bookmarks.filter((bookmark) => folderKeyAt(bookmark, 1) === activeFolder),
+    [bookmarks, activeFolder],
+  );
+
+  const subfolders = useMemo(
+    () =>
+      activeFolder === ALL_FOLDERS ? [] : buildFolderStats(folderScoped, 2, '本级'),
+    [folderScoped, activeFolder],
+  );
+
+  useEffect(() => {
+    if (activeFolder === ALL_FOLDERS || activeSubfolder === ALL_FOLDERS) return;
+    if (!subfolders.some((subfolder) => subfolder.key === activeSubfolder)) {
+      setActiveSubfolder(ALL_FOLDERS);
+    }
+  }, [subfolders, activeFolder, activeSubfolder]);
+
   const normalizedQuery = query.trim().toLowerCase();
 
   const visible = useMemo(() => {
-    const scoped =
-      activeFolder === ALL_FOLDERS
-        ? ordered
-        : ordered.filter((bookmark) => folderKeyOf(bookmark) === activeFolder);
+    const scoped = ordered.filter(
+      (bookmark) =>
+        (activeFolder === ALL_FOLDERS || folderKeyAt(bookmark, 1) === activeFolder) &&
+        (activeFolder === ALL_FOLDERS ||
+          activeSubfolder === ALL_FOLDERS ||
+          folderKeyAt(bookmark, 2) === activeSubfolder),
+    );
     if (!normalizedQuery) return scoped;
     return scoped.filter((bookmark) => matchesQuery(bookmark, normalizedQuery));
-  }, [ordered, activeFolder, normalizedQuery]);
+  }, [ordered, activeFolder, activeSubfolder, normalizedQuery]);
 
-  const grouped =
-    sortMode === 'recent' && activeFolder === ALL_FOLDERS && !normalizedQuery;
-  const groups = useMemo(() => (grouped ? groupByFolder(visible) : []), [grouped, visible]);
+  const groupDepth = activeFolder === ALL_FOLDERS ? 1 : 2;
+  const groups = useMemo(
+    () =>
+      sortMode === 'recent' && !normalizedQuery
+        ? groupByFolder(visible, groupDepth, groupDepth === 1 ? '未分组' : '本级')
+        : [],
+    [sortMode, normalizedQuery, visible, groupDepth],
+  );
+  // 只有一个分组时分组标题纯属噪音，直接平铺
+  const showGroups = groups.length > 1;
 
   const total = bookmarks.length;
   const hasClickData = useMemo(
@@ -213,7 +253,17 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const isEmpty = total === 0;
   const filteredEmpty = !isEmpty && visible.length === 0;
   const activeFolderLabel =
-    activeFolder === ALL_FOLDERS ? '全部书签' : folderLabelOf(activeFolder);
+    activeFolder === ALL_FOLDERS
+      ? '全部书签'
+      : folderLabelOf(activeFolder, '未分组') +
+        (activeSubfolder === ALL_FOLDERS
+          ? ''
+          : ` / ${folderLabelOf(activeSubfolder, '本级')}`);
+
+  const selectFolder = (key: string) => {
+    setActiveFolder(key);
+    setActiveSubfolder(ALL_FOLDERS);
+  };
 
   const openFilePicker = () => fileInputRef.current?.click();
 
@@ -232,6 +282,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     fromFileRef.current = true;
     setQuery('');
     setActiveFolder(ALL_FOLDERS);
+    setActiveSubfolder(ALL_FOLDERS);
     setBookmarks(parsed);
   };
 
@@ -250,6 +301,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const clearFilters = () => {
     setQuery('');
     setActiveFolder(ALL_FOLDERS);
+    setActiveSubfolder(ALL_FOLDERS);
   };
 
   useEffect(() => {
@@ -291,7 +343,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     : fromFile
       ? `已从文件导入 ${total} 个书签`
       : status === 'connected'
-        ? normalizedQuery
+        ? normalizedQuery || visible.length !== total
           ? `筛选出 ${visible.length} 个书签`
           : `已加载 ${total} 个收藏`
         : status === 'error'
@@ -315,7 +367,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
             folders={folders}
             total={total}
             activeFolder={activeFolder}
-            onSelectFolder={setActiveFolder}
+            onSelectFolder={selectFolder}
             allKey={ALL_FOLDERS}
           />
         )}
@@ -334,7 +386,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                   inputRef={mobileFilterRef}
                   className="min-w-0 flex-1"
                 />
-                <Select value={activeFolder} onValueChange={setActiveFolder}>
+                <Select value={activeFolder} onValueChange={selectFolder}>
                   <SelectTrigger
                     aria-label="选择文件夹"
                     className="h-9 w-[132px] shrink-0 text-[13px]"
@@ -376,6 +428,26 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                 </span>
               </div>
             </div>
+
+            {total > 0 && activeFolder !== ALL_FOLDERS && subfolders.length > 1 && (
+              <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="二级文件夹">
+                <SubfolderChip
+                  label="全部"
+                  count={folderScoped.length}
+                  active={activeSubfolder === ALL_FOLDERS}
+                  onSelect={() => setActiveSubfolder(ALL_FOLDERS)}
+                />
+                {subfolders.map((subfolder) => (
+                  <SubfolderChip
+                    key={subfolder.key}
+                    label={subfolder.label}
+                    count={subfolder.count}
+                    active={activeSubfolder === subfolder.key}
+                    onSelect={() => setActiveSubfolder(subfolder.key)}
+                  />
+                ))}
+              </div>
+            )}
 
             <p className="sr-only" role="status">
               {liveMessage}
@@ -514,7 +586,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
               </div>
             )}
 
-            {visible.length > 0 && grouped && (
+            {visible.length > 0 && showGroups && (
               <div className="mt-5 space-y-8">
                 {groups.map((group) => (
                   <section key={group.key} aria-label={group.label}>
@@ -541,7 +613,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
               </div>
             )}
 
-            {visible.length > 0 && !grouped && (
+            {visible.length > 0 && !showGroups && (
               <div className={cn('mt-5', TILE_GRID)}>
                 {visible.map((bookmark) => (
                   <BookmarkCard
@@ -587,6 +659,36 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
         onChange={handleFile}
       />
     </div>
+  );
+}
+
+function SubfolderChip({
+  label,
+  count,
+  active,
+  onSelect,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onSelect}
+      title={label}
+      className={cn(
+        'flex h-7 max-w-[180px] items-center gap-1.5 rounded-full border px-2.5 text-[12px] transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30',
+        active
+          ? 'border-transparent bg-accent font-medium text-foreground'
+          : 'bg-card text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <span className="truncate">{label}</span>
+      <span className="shrink-0 text-[11px] tabular-nums opacity-70">{count}</span>
+    </button>
   );
 }
 
