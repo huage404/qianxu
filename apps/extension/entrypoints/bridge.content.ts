@@ -1,26 +1,42 @@
 import { browser } from 'wxt/browser';
 import {
   MSG_SOURCE_EXT,
+  bridgeLog,
+  bridgeWarn,
   isBookmarksRequest,
   type Bookmark,
   type ExtensionToWebMessage,
 } from '@qianxu/shared';
 
 import { EXT_MSG_BOOKMARKS_CHANGED, EXT_MSG_GET_BOOKMARKS } from '@/utils/bookmarks';
-import { isAllowedOrigin, toMatchPatterns } from '@/utils/site';
+import { SITE_ORIGINS, isAllowedOrigin, toMatchPatterns } from '@/utils/site';
 
+// 注意：manifest 的 matches 同样在构建期固化。若当前页面的协议或域名不匹配，
+// 本文件根本不会执行，也就不会有下面的日志 —— 此时要去 chrome://extensions 看已安装扩展的 matches。
 export default defineContentScript({
   matches: toMatchPatterns(),
   runAt: 'document_end',
   main() {
+    bridgeLog('content script 已注入', {
+      currentOrigin: window.location.origin,
+      allowedOrigins: SITE_ORIGINS,
+    });
+
     // matches 只能匹配到主机名，这里按完整 origin（含端口）再拦一层；
     // 白名单之外的页面连监听都不注册。
-    if (!isAllowedOrigin(window.location.origin)) return;
+    if (!isAllowedOrigin(window.location.origin)) {
+      bridgeWarn('当前 origin 不在扩展白名单，未注册消息监听', {
+        currentOrigin: window.location.origin,
+        allowedOrigins: SITE_ORIGINS,
+      });
+      return;
+    }
 
     window.addEventListener('message', (event) => {
       if (event.source !== window) return;
       if (event.origin !== window.location.origin) return;
       if (!isBookmarksRequest(event.data)) return;
+      bridgeLog('收到页面请求', { requestId: event.data.requestId });
       void respond(event.data.requestId);
     });
 
@@ -36,9 +52,13 @@ async function fetchBookmarks(): Promise<{ ok: boolean; bookmarks: Bookmark[] }>
     const reply = (await browser.runtime.sendMessage({
       type: EXT_MSG_GET_BOOKMARKS,
     })) as { bookmarks?: Bookmark[] } | undefined;
-    if (!Array.isArray(reply?.bookmarks)) return { ok: false, bookmarks: [] };
+    if (!Array.isArray(reply?.bookmarks)) {
+      bridgeWarn('后台未返回书签列表', { reply });
+      return { ok: false, bookmarks: [] };
+    }
     return { ok: true, bookmarks: reply.bookmarks };
-  } catch {
+  } catch (error) {
+    bridgeWarn('向后台请求书签失败', error);
     return { ok: false, bookmarks: [] };
   }
 }
@@ -52,6 +72,7 @@ async function respond(requestId: string) {
     ok,
     bookmarks,
   };
+  bridgeLog('回应该请求', { requestId, ok, count: bookmarks.length });
   window.postMessage(response, window.location.origin);
 }
 
@@ -63,5 +84,6 @@ async function push() {
     ok,
     bookmarks,
   };
+  bridgeLog('推送书签变更', { ok, count: bookmarks.length });
   window.postMessage(response, window.location.origin);
 }

@@ -190,6 +190,21 @@ docker build -f Dockerfile.ext --target ext --output type=local,dest=./dist/ext 
 2. **反向代理**：绑定域名、配置证书并强制 HTTPS，转发到 `127.0.0.1:17871`。
 3. **扩展构建**：`WXT_SITE_ORIGINS` 填入同一个 origin；主域与 `www` 都使用时一并写入，逗号分隔。
 
+协议也是 origin 的一部分：站点从 HTTP 切到 HTTPS（或反向代理开启强制 HTTPS）后，白名单必须同步改成 `https://`，否则 content script 不会被注入，页面会一直显示「未检测到书签插件」。同理，证书必须覆盖实际访问的子域名，证书无效时 Chrome 停在告警页，扩展脚本也不会执行。
+
+### 桥接排查
+
+在页面控制台执行 `localStorage.setItem('qianxu:debug', '1')` 后刷新，页面与扩展两侧都会输出 `[qianxu:bridge]` 前缀的日志（请求发出、响应回来、超时判定，以及 content script 的注入与 origin 校验结果）。关闭用 `localStorage.removeItem('qianxu:debug')`。
+
+按日志判读：
+
+| 现象 | 结论 |
+| --- | --- |
+| 只有「发送请求 / 本轮请求无响应」，没有「收到响应」 | content script 没有应答，继续看下面两条 |
+| 控制台完全没有「content script 已注入」 | 页面未命中 manifest 的 `matches`（协议或域名不对）。到 `chrome://extensions` → 详情 → 内容脚本 查看已安装扩展实际固化的 matches |
+| 有「content script 已注入」，但提示「当前 origin 不在扩展白名单」 | `matches` 只到主机名，完整 origin（协议/端口）不在 `WXT_SITE_ORIGINS`，需要重新打包扩展 |
+| 出现「收到响应」但 `ok: false` | 桥接正常，是扩展读取收藏夹失败，看扩展侧「向后台请求书签失败」日志 |
+
 ## 提交与协作
 
 提交信息格式、分支命名与提交前检查见 [AGENTS.md](./AGENTS.md)。产品定位、能力边界与未决事项见 [PRODUCT.md](./PRODUCT.md)。

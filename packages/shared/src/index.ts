@@ -15,6 +15,27 @@ export const BOOKMARKS_STORAGE_KEY = 'bookmarks';
 export const MSG_SOURCE_WEB = 'qianxu:web';
 export const MSG_SOURCE_EXT = 'qianxu:ext';
 
+/** 桥接排查日志：在页面控制台执行 localStorage.setItem('qianxu:debug', '1') 后刷新即开启 */
+export const BRIDGE_DEBUG_STORAGE_KEY = 'qianxu:debug';
+export const BRIDGE_LOG_PREFIX = '[qianxu:bridge]';
+
+export function bridgeLog(...args: unknown[]): void {
+  bridgeOutput('info', args);
+}
+
+export function bridgeWarn(...args: unknown[]): void {
+  bridgeOutput('warn', args);
+}
+
+function bridgeOutput(level: 'info' | 'warn', args: unknown[]): void {
+  try {
+    if (globalThis.localStorage?.getItem(BRIDGE_DEBUG_STORAGE_KEY) !== '1') return;
+  } catch {
+    return;
+  }
+  console[level](BRIDGE_LOG_PREFIX, ...args);
+}
+
 export interface BookmarksRequest {
   source: typeof MSG_SOURCE_WEB;
   type: 'BOOKMARKS_REQUEST';
