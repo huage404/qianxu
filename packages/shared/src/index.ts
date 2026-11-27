@@ -49,6 +49,8 @@ export interface BookmarksResponse {
   /** 读取收藏夹是否成功；旧版本扩展不带该字段，视为成功 */
   ok?: boolean;
   bookmarks: Bookmark[];
+  /** 扩展是否已声明接管浏览器新标签页；旧版本不带该字段，视为未接管 */
+  newTabOverride?: boolean;
 }
 
 export interface BookmarksUpdated {
@@ -81,6 +83,7 @@ export function isBookmarksResponse(value: unknown): value is BookmarksResponse 
     msg.type === 'BOOKMARKS_RESPONSE' &&
     typeof msg.requestId === 'string' &&
     isOptionalBoolean(msg.ok) &&
+    isOptionalBoolean(msg.newTabOverride) &&
     Array.isArray(msg.bookmarks)
   );
 }

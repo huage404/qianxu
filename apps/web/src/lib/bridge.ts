@@ -14,8 +14,8 @@ import { createId } from '@/lib/id';
 const DEFAULT_TIMEOUT_MS = 800;
 
 export type BookmarksResult =
-  | { status: 'ok'; bookmarks: Bookmark[] }
-  | { status: 'error' }
+  | { status: 'ok'; bookmarks: Bookmark[]; newTabOverride: boolean }
+  | { status: 'error'; newTabOverride: boolean }
   | { status: 'absent' };
 
 export interface BookmarksUpdate {
@@ -86,10 +86,14 @@ export async function requestBookmarks(
   }
   if (response.ok === false) {
     bridgeWarn('插件响应读取收藏夹失败', { requestId: response.requestId });
-    return { status: 'error' };
+    return { status: 'error', newTabOverride: response.newTabOverride === true };
   }
   bridgeLog('书签加载完成', { count: response.bookmarks.length });
-  return { status: 'ok', bookmarks: response.bookmarks };
+  return {
+    status: 'ok',
+    bookmarks: response.bookmarks,
+    newTabOverride: response.newTabOverride === true,
+  };
 }
 
 export function subscribeBookmarks(listener: (update: BookmarksUpdate) => void): () => void {

@@ -46,6 +46,11 @@ export default defineConfig({
     return {
       name: 'Qianxu 书签',
       description: '读取浏览器收藏夹，并在 Qianxu 站点展示；收藏与删除直接写入浏览器收藏夹。',
+      // 静态声明，装上即接管浏览器新标签页，运行期无法关闭；
+      // 目标地址由构建期 WXT_SITE_ORIGINS 的第一项决定（见 entrypoints/newtab/main.ts）。
+      chrome_url_overrides: {
+        newtab: 'newtab.html',
+      },
       permissions: [
         'storage',
         'bookmarks',

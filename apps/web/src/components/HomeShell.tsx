@@ -19,6 +19,7 @@ import { BookmarkCard } from '@/components/BookmarkCard';
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { BookmarksSidebar, type FolderStat } from '@/components/BookmarksSidebar';
 import { EmptyState } from '@/components/EmptyState';
+import type { NewTabState } from '@/components/NewTabHint';
 import { SearchBar } from '@/components/SearchBar';
 import { TopNav } from '@/components/TopNav';
 import { Badge } from '@/components/ui/badge';
@@ -141,6 +142,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [activeSubfolder, setActiveSubfolder] = useState<string>(ALL_FOLDERS);
   const [sortMode, setSortMode] = useState<SortMode>('recent');
   const [clickStats, setClickStats] = useState<ClickStats>({});
+  const [newTabOverride, setNewTabOverride] = useState(false);
 
   const clickStatsRef = useRef<ClickStats>({});
   const fromFileRef = useRef(false);
@@ -159,6 +161,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setStatus('checking');
     setImportError(null);
     const result = await requestBookmarks();
+    // absent 意味着插件根本没见过，其余两种分支都来自插件的真实应答
+    setNewTabOverride(result.status !== 'absent' && result.newTabOverride);
     if (result.status !== 'ok') {
       setStatus(result.status);
       return;
@@ -250,6 +254,13 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     [bookmarks, clickStats],
   );
   const checking = status === 'checking';
+  const newTabState: NewTabState | null = checking
+    ? null
+    : status === 'absent'
+      ? 'install'
+      : newTabOverride
+        ? 'taken'
+        : 'upgrade';
   const isEmpty = total === 0;
   const filteredEmpty = !isEmpty && visible.length === 0;
   const activeFolderLabel =
@@ -359,6 +370,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
         onImport={openFilePicker}
         onRefresh={loadFromExtension}
         checking={checking}
+        newTabState={newTabState}
       />
 
       <div className="relative mx-auto flex w-full max-w-[1200px] flex-1 flex-col px-5 sm:px-8 lg:min-h-0 lg:flex-row lg:gap-10 lg:overflow-hidden">

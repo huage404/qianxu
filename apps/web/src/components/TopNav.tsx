@@ -3,6 +3,7 @@ import { Download, RotateCw, Upload } from 'lucide-react';
 
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { LogoMark } from '@/components/LogoMark';
+import { NewTabHint, type NewTabState } from '@/components/NewTabHint';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Button } from '@/components/ui/button';
 import { EXTENSION_DOWNLOAD_URL } from '@/lib/constants';
@@ -17,6 +18,8 @@ interface TopNavProps {
   onImport: () => void;
   onRefresh: () => void;
   checking: boolean;
+  /** 插件检测完成前为 null，此时不展示新标签页入口 */
+  newTabState: NewTabState | null;
 }
 
 export function TopNav({
@@ -26,6 +29,7 @@ export function TopNav({
   onImport,
   onRefresh,
   checking,
+  newTabState,
 }: TopNavProps) {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background">
@@ -45,6 +49,7 @@ export function TopNav({
         </div>
 
         <div className="ml-auto flex items-center gap-1 lg:ml-3">
+          {newTabState && <NewTabHint state={newTabState} />}
           <Button
             variant="ghost"
             size="sm"

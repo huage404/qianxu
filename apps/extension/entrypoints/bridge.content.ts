@@ -71,9 +71,15 @@ async function respond(requestId: string) {
     requestId,
     ok,
     bookmarks,
+    newTabOverride: takesOverNewTab(),
   };
   bridgeLog('回应该请求', { requestId, ok, count: bookmarks.length });
   window.postMessage(response, window.location.origin);
+}
+
+// 接管是在装包那一刻就固化的，页面只能据此提示用户升级，无法代为开启。
+function takesOverNewTab(): boolean {
+  return typeof browser.runtime.getManifest().chrome_url_overrides?.newtab === 'string';
 }
 
 async function push() {
