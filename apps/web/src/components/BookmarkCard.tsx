@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
-import { isHttpUrl, type Bookmark, type LinkHealthRecord } from '@qianxu/shared';
+import { type Bookmark, type LinkHealthRecord } from '@qianxu/shared';
 
+import { InlineField, requireHttpUrl } from '@/components/InlineField';
 import { cn } from '@/lib/utils';
 
 const MONOGRAM_HUES = [262, 292, 338, 22, 152, 198, 276, 68];
@@ -153,16 +154,19 @@ export function BookmarkCard({
 
         <span className="flex w-full min-w-0 flex-col gap-0.5">
           <InlineField
-            kind="title"
+            label="书签标题"
+            hint="点击重命名"
             value={bookmark.title}
             className="text-sm font-medium"
             onCommit={(next) => onRename?.(bookmark.id, next)}
             onInvalid={onInvalid}
           />
           <InlineField
-            kind="url"
+            label="书签链接"
+            hint="点击修改链接"
             value={bookmark.url}
             className="text-[11px] leading-4 text-muted-foreground"
+            validate={requireHttpUrl}
             onCommit={(next) => onSetUrl?.(bookmark.id, next)}
             onInvalid={onInvalid}
           />
@@ -198,87 +202,5 @@ export function BookmarkCard({
 
       {note && <span className="sr-only">{note}</span>}
     </a>
-  );
-}
-
-/**
- * 点一下就地变成输入框，回车或失焦提交，Esc 放弃。
- * 校验不过时保持编辑状态，让用户改完再来，而不是悄悄退回旧值。
- */
-function InlineField({
-  kind,
-  value,
-  className,
-  onCommit,
-  onInvalid,
-}: {
-  kind: 'title' | 'url';
-  value: string;
-  className?: string;
-  onCommit: (value: string) => void;
-  onInvalid: (message: string) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        className={cn(
-          'w-full min-w-0 truncate rounded-sm text-left outline-none hover:bg-accent/70 focus-visible:ring-[3px] focus-visible:ring-ring/30',
-          className,
-        )}
-        title={kind === 'title' ? '点击重命名' : '点击修改链接'}
-        onClick={() => {
-          setDraft(value);
-          setEditing(true);
-        }}
-      >
-        {value}
-      </button>
-    );
-  }
-
-  const commit = () => {
-    const next = draft.trim();
-    if (kind === 'title' && !next) {
-      onInvalid('标题不能为空');
-      return;
-    }
-    if (kind === 'url' && !isHttpUrl(next)) {
-      onInvalid('链接必须是 http 或 https 地址');
-      return;
-    }
-    setEditing(false);
-    if (next !== value) onCommit(next);
-  };
-
-  return (
-    <input
-      autoFocus
-      value={draft}
-      // 不用 type="url"：浏览器的原生校验会抢在 commit 之前拦下回车，
-      // 而这里的提示文案要由 onInvalid 统一给到页面
-      type="text"
-      spellCheck={false}
-      aria-label={kind === 'title' ? '书签标题' : '书签链接'}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          commit();
-        }
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          setEditing(false);
-        }
-      }}
-      className={cn(
-        'w-full min-w-0 rounded-sm border bg-background px-1 py-0.5 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30',
-        className,
-      )}
-    />
   );
 }

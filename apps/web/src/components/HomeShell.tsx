@@ -15,17 +15,21 @@ import {
   FileJson,
   Folder,
   LockKeyhole,
+  MoreHorizontal,
+  PencilLine,
   Puzzle,
   SearchX,
+  ShieldCheck,
   TrendingUp,
   TriangleAlert,
 } from 'lucide-react';
 
 import { BookmarkCard } from '@/components/BookmarkCard';
 import { BookmarkFilter } from '@/components/BookmarkFilter';
-import { BookmarksSidebar, type FolderStat } from '@/components/BookmarksSidebar';
+import { BookmarksSidebar, type FolderActions } from '@/components/BookmarksSidebar';
 import { EditActionBar } from '@/components/EditActionBar';
 import { EmptyState } from '@/components/EmptyState';
+import { InlineField } from '@/components/InlineField';
 import type { NewTabState } from '@/components/NewTabHint';
 import { SearchBar } from '@/components/SearchBar';
 import { TopNav } from '@/components/TopNav';
@@ -42,6 +46,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -49,8 +59,25 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { mutateBookmarks, requestBookmarks, subscribeBookmarks, subscribeHealth } from '@/lib/bridge';
+import {
+  mutateBookmarks,
+  requestBookmarks,
+  subscribeBookmarks,
+  subscribeHealth,
+  type MutateResult,
+} from '@/lib/bridge';
 import { EXTENSION_DOWNLOAD_URL } from '@/lib/constants';
+import {
+  ALL_FOLDERS,
+  buildFolderStats,
+  createFolderIndex,
+  folderLabelOf,
+  folderTitlesOf,
+  groupByFolder,
+  levelKeyOf,
+  type BookmarkGroup,
+  type FolderStat,
+} from '@/lib/folders';
 import { parseBookmarksJson } from '@/lib/import';
 import {
   loadClickStats,
@@ -66,80 +93,11 @@ import { cn } from '@/lib/utils';
 
 type Status = 'checking' | 'connected' | 'absent' | 'error';
 
-const ALL_FOLDERS = '__all__';
-const UNGROUPED_KEY = '__ungrouped__';
 const TILE_GRID = 'grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4';
-
-interface BookmarkGroup {
-  key: string;
-  label: string;
-  bookmarks: Bookmark[];
-}
-
-function folderPathOf(bookmark: Bookmark): string[] {
-  if (bookmark.folderPath?.length) return bookmark.folderPath;
-  return bookmark.folder ? [bookmark.folder] : [];
-}
-
-/** depth 从 1 开始；书签没深入到该层时归入未分组 */
-function folderKeyAt(bookmark: Bookmark, depth: number): string {
-  return folderPathOf(bookmark)[depth - 1] ?? UNGROUPED_KEY;
-}
-
-function folderLabelOf(key: string, ungroupedLabel: string): string {
-  return key === UNGROUPED_KEY ? ungroupedLabel : key;
-}
-
-function compareFolders(a: { key: string; label: string }, b: { key: string; label: string }): number {
-  if (a.key === UNGROUPED_KEY) return 1;
-  if (b.key === UNGROUPED_KEY) return -1;
-  return a.label.localeCompare(b.label, 'zh-Hans-CN');
-}
-
-function buildFolderStats(
-  list: Bookmark[],
-  depth: number,
-  ungroupedLabel: string,
-): FolderStat[] {
-  const counts = new Map<string, number>();
-
-  for (const bookmark of list) {
-    const key = folderKeyAt(bookmark, depth);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-
-  return [...counts]
-    .map(([key, count]) => ({ key, label: folderLabelOf(key, ungroupedLabel), count }))
-    .sort(compareFolders);
-}
-
-function groupByFolder(
-  list: Bookmark[],
-  depth: number,
-  ungroupedLabel: string,
-): BookmarkGroup[] {
-  const groups = new Map<string, BookmarkGroup>();
-
-  for (const bookmark of list) {
-    const key = folderKeyAt(bookmark, depth);
-    const group = groups.get(key);
-    if (group) {
-      group.bookmarks.push(bookmark);
-    } else {
-      groups.set(key, {
-        key,
-        label: folderLabelOf(key, ungroupedLabel),
-        bookmarks: [bookmark],
-      });
-    }
-  }
-
-  return [...groups.values()].sort(compareFolders);
-}
 
 function matchesQuery(bookmark: Bookmark, query: string): boolean {
   if (!query) return true;
-  const haystack = [bookmark.title, bookmark.url, ...folderPathOf(bookmark)]
+  const haystack = [bookmark.title, bookmark.url, ...folderTitlesOf(bookmark)]
     .join(' ')
     .toLowerCase();
   return haystack.includes(query);
@@ -176,6 +134,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [editError, setEditError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [mutating, setMutating] = useState(false);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
 
   const clickStatsRef = useRef<ClickStats>({});
   const fromFileRef = useRef(false);
@@ -240,7 +199,12 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     [bookmarks, sortMode, clickStats],
   );
 
-  const folders = useMemo(() => buildFolderStats(bookmarks, 1, '未分组'), [bookmarks]);
+  const folderIndex = useMemo(() => createFolderIndex(folderNodes), [folderNodes]);
+
+  const folders = useMemo(
+    () => buildFolderStats(folderNodes, bookmarks, folderIndex, 1, '未分组'),
+    [folderNodes, bookmarks, folderIndex],
+  );
 
   useEffect(() => {
     if (activeFolder !== ALL_FOLDERS && !folders.some((folder) => folder.key === activeFolder)) {
@@ -253,14 +217,16 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     () =>
       activeFolder === ALL_FOLDERS
         ? bookmarks
-        : bookmarks.filter((bookmark) => folderKeyAt(bookmark, 1) === activeFolder),
-    [bookmarks, activeFolder],
+        : bookmarks.filter((bookmark) => levelKeyOf(bookmark, folderIndex, 1) === activeFolder),
+    [bookmarks, activeFolder, folderIndex],
   );
 
   const subfolders = useMemo(
     () =>
-      activeFolder === ALL_FOLDERS ? [] : buildFolderStats(folderScoped, 2, '本级'),
-    [folderScoped, activeFolder],
+      activeFolder === ALL_FOLDERS
+        ? []
+        : buildFolderStats(folderNodes, folderScoped, folderIndex, 2, '本级', activeFolder),
+    [folderNodes, folderScoped, folderIndex, activeFolder],
   );
 
   useEffect(() => {
@@ -285,23 +251,24 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const visible = useMemo(() => {
     const scoped = ordered.filter(
       (bookmark) =>
-        (activeFolder === ALL_FOLDERS || folderKeyAt(bookmark, 1) === activeFolder) &&
+        (activeFolder === ALL_FOLDERS ||
+          levelKeyOf(bookmark, folderIndex, 1) === activeFolder) &&
         (activeFolder === ALL_FOLDERS ||
           activeSubfolder === ALL_FOLDERS ||
-          folderKeyAt(bookmark, 2) === activeSubfolder) &&
+          levelKeyOf(bookmark, folderIndex, 2) === activeSubfolder) &&
         (!attentionOnly || needsAttention(health[bookmark.url])),
     );
     if (!normalizedQuery) return scoped;
     return scoped.filter((bookmark) => matchesQuery(bookmark, normalizedQuery));
-  }, [ordered, activeFolder, activeSubfolder, attentionOnly, health, normalizedQuery]);
+  }, [ordered, activeFolder, activeSubfolder, folderIndex, attentionOnly, health, normalizedQuery]);
 
   const groupDepth = activeFolder === ALL_FOLDERS ? 1 : 2;
   const groups = useMemo(
     () =>
       sortMode === 'recent' && !normalizedQuery
-        ? groupByFolder(visible, groupDepth, groupDepth === 1 ? '未分组' : '本级')
+        ? groupByFolder(visible, folderIndex, groupDepth, groupDepth === 1 ? '未分组' : '本级')
         : [],
-    [sortMode, normalizedQuery, visible, groupDepth],
+    [sortMode, normalizedQuery, visible, folderIndex, groupDepth],
   );
   // 只有一个分组时分组标题纯属噪音，直接平铺
   const showGroups = groups.length > 1;
@@ -324,10 +291,10 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const activeFolderLabel =
     activeFolder === ALL_FOLDERS
       ? '全部书签'
-      : folderLabelOf(activeFolder, '未分组') +
+      : folderLabelOf(activeFolder, folderIndex, '未分组') +
         (activeSubfolder === ALL_FOLDERS
           ? ''
-          : ` / ${folderLabelOf(activeSubfolder, '本级')}`);
+          : ` / ${folderLabelOf(activeSubfolder, folderIndex, '本级')}`);
 
   const selectFolder = (key: string) => {
     setActiveFolder(key);
@@ -375,8 +342,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
    * 写入一律不重试：请求可能已经生效、只是回执丢了，重发会把同一批操作做两遍。
    * 所以无响应时如实说明状态未知，让用户自己刷新，而不是假装成功。
    */
-  const submitOps = useCallback(async (ops: BookmarkOp[]): Promise<boolean> => {
-    if (ops.length === 0) return false;
+  const submitOps = useCallback(async (ops: BookmarkOp[]): Promise<MutateResult | null> => {
+    if (ops.length === 0) return null;
     setMutating(true);
     setEditError(null);
     const result = await mutateBookmarks(ops);
@@ -384,7 +351,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
 
     if (result.status !== 'ok') {
       setEditError('编辑未能确认，收藏夹可能已经改动。点右上角「刷新」可重新读取真实状态。');
-      return false;
+      return null;
     }
 
     setBookmarks(result.bookmarks);
@@ -392,7 +359,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setHealth(result.health);
     const failed = result.results.filter((item) => !item.ok);
     if (failed.length > 0) setEditError(failed[0]?.error ?? `${failed.length} 项未能完成`);
-    return failed.length === 0;
+    return result;
   }, []);
 
   const handleRename = useCallback(
@@ -407,6 +374,38 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
       void submitOps([{ kind: 'setUrl', id, url }]);
     },
     [submitOps],
+  );
+
+  const handleRenameFolder = useCallback(
+    (id: string, title: string) => {
+      void submitOps([{ kind: 'rename', id, title }]);
+    },
+    [submitOps],
+  );
+
+  /**
+   * 新建后直接进入重命名：先用占位名落盘，再从回执的文件夹表里找出多出来的那个节点。
+   * 新文件夹的 id 只有扩展知道，页面唯一可信的来源就是回执。
+   *
+   * 落点要按 id 链还原成「一级 + 二级」的导航状态：直接把 activeFolder 设成二级 id，
+   * 会被「activeFolder 必须命中一级列表」的效应打回全部书签。
+   */
+  const handleCreateFolder = useCallback(
+    async (parentId: string) => {
+      const before = new Set(folderNodes.map((node) => node.id));
+      const result = await submitOps([{ kind: 'createFolder', title: '新建文件夹', parentId }]);
+      if (!result) return;
+
+      const created = result.folders.find((node) => !before.has(node.id));
+      if (!created) return;
+
+      const index = createFolderIndex(result.folders);
+      const chain = index.chainOf(created.id);
+      setActiveFolder(chain[0] ?? ALL_FOLDERS);
+      setActiveSubfolder(chain[1] ?? ALL_FOLDERS);
+      setRenamingFolderId(created.id);
+    },
+    [folderNodes, submitOps],
   );
 
   const toggleSelect = useCallback((id: string) => {
@@ -430,12 +429,13 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     await submitOps(ids.map((id) => ({ kind: 'remove' as const, id })));
   }, [selectedIds, submitOps]);
 
-  // 退出编辑态就把选择、报错和待确认的弹窗一起收掉，别留下半截状态
+  // 退出编辑态就把选择、报错、待确认弹窗和文件夹改名一起收掉，别留下半截状态
   useEffect(() => {
     if (editMode) return;
     setSelected(new Set());
     setEditError(null);
     setConfirmingDelete(false);
+    setRenamingFolderId(null);
   }, [editMode]);
 
   const renderCard = (bookmark: Bookmark) => (
@@ -523,6 +523,30 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     if (editHint) setEditMode(false);
   }, [editHint]);
 
+  /**
+   * 侧栏只有在编辑态、且确实拿到了文件夹节点表时才交出写操作。
+   * 不传 actions 就等于只读，侧栏自己不必再判断一遍页面状态。
+   */
+  const folderActions: FolderActions | undefined =
+    editMode && editHint === null
+      ? {
+          rename: handleRenameFolder,
+          createRoot: () => {
+            const container = folderIndex.defaultContainerId;
+            if (container) void handleCreateFolder(container);
+          },
+          createSubfolder: (parentId) => void handleCreateFolder(parentId),
+          invalid: setEditError,
+          renamingId: renamingFolderId,
+          startRename: setRenamingFolderId,
+          endRename: () => setRenamingFolderId(null),
+        }
+      : undefined;
+
+  // 只有一个二级文件夹时 chip 行纯属噪音；但编辑态下必须显示，否则刚建的那一个无处改名
+  const showSubfolders =
+    activeFolder !== ALL_FOLDERS && subfolders.length > (folderActions ? 0 : 1);
+
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
       <TopNav
@@ -549,6 +573,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
             activeFolder={activeFolder}
             onSelectFolder={selectFolder}
             allKey={ALL_FOLDERS}
+            actions={folderActions}
           />
         )}
 
@@ -609,10 +634,11 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
               </div>
             </div>
 
-            {total > 0 && activeFolder !== ALL_FOLDERS && subfolders.length > 1 && (
+            {total > 0 && showSubfolders && (
               <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="二级文件夹">
                 <SubfolderChip
                   label="全部"
+                  hint={`${activeFolderLabel} 全部`}
                   count={folderScoped.length}
                   active={activeSubfolder === ALL_FOLDERS}
                   onSelect={() => setActiveSubfolder(ALL_FOLDERS)}
@@ -621,9 +647,12 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                   <SubfolderChip
                     key={subfolder.key}
                     label={subfolder.label}
+                    hint={subfolder.hint}
                     count={subfolder.count}
                     active={activeSubfolder === subfolder.key}
                     onSelect={() => setActiveSubfolder(subfolder.key)}
+                    actions={folderActions}
+                    folderKey={subfolder.key}
                   />
                 ))}
               </div>
@@ -771,15 +800,33 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
 
             {filteredEmpty && (
               <div className="mt-6">
-                <EmptyState
-                  icon={SearchX}
-                  title="没有匹配的书签"
-                  description="换个关键词，或清除筛选看看全部书签。"
-                >
-                  <Button size="sm" variant="outline" onClick={clearFilters}>
-                    清除筛选
-                  </Button>
-                </EmptyState>
+                {normalizedQuery ? (
+                  <EmptyState
+                    icon={SearchX}
+                    title="没有匹配的书签"
+                    description="换个关键词，或清除筛选看看全部书签。"
+                  >
+                    <Button size="sm" variant="outline" onClick={clearFilters}>
+                      清除筛选
+                    </Button>
+                  </EmptyState>
+                ) : attentionOnly ? (
+                  <EmptyState
+                    icon={ShieldCheck}
+                    title="这里没有需要关注的链接"
+                    description="其余书签要么可访问，要么还没测过。"
+                  >
+                    <Button size="sm" variant="outline" onClick={clearFilters}>
+                      清除筛选
+                    </Button>
+                  </EmptyState>
+                ) : (
+                  <EmptyState
+                    icon={Folder}
+                    title="这个文件夹还是空的"
+                    description="把网页收藏到这个文件夹里，回到这里就能看到。"
+                  />
+                )}
               </div>
             )}
 
@@ -884,31 +931,87 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
 
 function SubfolderChip({
   label,
+  hint,
   count,
   active,
   onSelect,
+  actions,
+  folderKey,
 }: {
   label: string;
+  hint: string;
   count: number;
   active: boolean;
   onSelect: () => void;
+  /** 只有重命名：页面只导航两级，三级文件夹建出来也看不见、点不到 */
+  actions?: FolderActions;
+  folderKey?: string;
 }) {
+  const renaming = Boolean(actions && folderKey && actions.renamingId === folderKey);
+
+  if (renaming && actions && folderKey) {
+    return (
+      <div className="flex h-7 items-center rounded-full border bg-background px-2">
+        <InlineField
+          label="文件夹名称"
+          hint=""
+          value={label}
+          startEditing
+          className="text-[12px]"
+          onCommit={(next) => {
+            actions.endRename();
+            actions.rename(folderKey, next);
+          }}
+          onCancel={actions.endRename}
+          onInvalid={actions.invalid}
+        />
+      </div>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onSelect}
-      title={label}
+    <div
       className={cn(
-        'flex h-7 max-w-[180px] items-center gap-1.5 rounded-full border px-2.5 text-[12px] transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30',
+        'flex h-7 max-w-[220px] items-center rounded-full border text-[12px] transition-colors',
         active
           ? 'border-transparent bg-accent font-medium text-foreground'
-          : 'bg-card text-muted-foreground hover:text-foreground',
+          : 'bg-card text-muted-foreground',
       )}
     >
-      <span className="truncate">{label}</span>
-      <span className="shrink-0 text-[11px] tabular-nums opacity-70">{count}</span>
-    </button>
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={onSelect}
+        title={hint}
+        className={cn(
+          'flex min-w-0 items-center gap-1.5 rounded-full py-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30',
+          actions && folderKey ? 'pl-2.5' : 'px-2.5',
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <span className="shrink-0 text-[11px] tabular-nums opacity-70">{count}</span>
+      </button>
+
+      {actions && folderKey && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`「${label}」子文件夹操作`}
+              className="flex h-7 w-6 shrink-0 items-center justify-center rounded-full outline-none transition-colors hover:bg-accent/70 focus-visible:ring-[3px] focus-visible:ring-ring/30 data-[state=open]:bg-accent/70"
+            >
+              <MoreHorizontal className="size-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => actions.startRename(folderKey)}>
+              <PencilLine />
+              重命名
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
   );
 }
 
