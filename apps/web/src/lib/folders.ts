@@ -154,3 +154,41 @@ export function folderTitlesOf(bookmark: Bookmark): string[] {
   if (bookmark.folderPath?.length) return bookmark.folderPath;
   return bookmark.folder ? [bookmark.folder] : [];
 }
+
+export interface MoveTarget {
+  id: string;
+  label: string;
+  /** 0 是顶层（默认容器或一级文件夹），1 是二级文件夹 */
+  depth: number;
+}
+
+const byTitle = (a: BookmarkFolder, b: BookmarkFolder) =>
+  a.title.localeCompare(b.title, 'zh-Hans-CN');
+
+/**
+ * 「移动到…」的候选列表。
+ *
+ * 只铺两级：页面只导航两级，把三级文件夹放进列表等于把书签藏进一个用户到不了的地方。
+ * 顶层容器也放进去——它是「不分组」的真实落点，没有它就只能往文件夹里挪、挪不出来。
+ */
+export function buildMoveTargets(nodes: BookmarkFolder[], index: FolderIndex): MoveTarget[] {
+  const userFolders = nodes.filter((node) => !node.builtin);
+  const topLevel = userFolders
+    .filter((node) => index.chainOf(node.id).length === 1)
+    .sort(byTitle);
+
+  const targets: MoveTarget[] = [];
+  const container = nodes.find((node) => node.builtin);
+  if (container) {
+    targets.push({ id: container.id, label: `${container.title}（不分组）`, depth: 0 });
+  }
+
+  for (const folder of topLevel) {
+    targets.push({ id: folder.id, label: folder.title, depth: 0 });
+    for (const child of userFolders.filter((node) => node.parentId === folder.id).sort(byTitle)) {
+      targets.push({ id: child.id, label: child.title, depth: 1 });
+    }
+  }
+
+  return targets;
+}

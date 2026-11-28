@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { dropProps, type DragState } from '@/lib/drag';
 import { UNGROUPED_KEY, type FolderStat } from '@/lib/folders';
 import { cn } from '@/lib/utils';
 
@@ -29,6 +30,10 @@ interface BookmarksSidebarProps {
   onSelectFolder: (key: string) => void;
   allKey: string;
   actions?: FolderActions;
+  /** 拖拽落点；省略即不接受拖放 */
+  drag?: DragState;
+  /** 「未分组」不是一个文件夹节点，它对应默认容器，移动到这里等于把书签挪出文件夹 */
+  ungroupedId?: string;
 }
 
 export function BookmarksSidebar({
@@ -38,6 +43,8 @@ export function BookmarksSidebar({
   onSelectFolder,
   allKey,
   actions,
+  drag,
+  ungroupedId,
 }: BookmarksSidebarProps) {
   return (
     <aside className="hidden lg:flex lg:h-full lg:w-[220px] lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:pt-10 lg:pb-6">
@@ -62,6 +69,8 @@ export function BookmarksSidebar({
             onClick={() => onSelectFolder(folder.key)}
             actions={actions}
             folderKey={folder.key}
+            drag={drag}
+            ungroupedId={ungroupedId}
           />
         ))}
       </nav>
@@ -90,6 +99,8 @@ function FolderItem({
   onClick,
   actions,
   folderKey,
+  drag,
+  ungroupedId,
 }: {
   icon: typeof Folder;
   label: string;
@@ -99,10 +110,21 @@ function FolderItem({
   onClick: () => void;
   actions?: FolderActions;
   folderKey?: string;
+  drag?: DragState;
+  ungroupedId?: string;
 }) {
   // 「未分组」是个虚拟分组，不是书签树里的节点，没有 id 可以改
   const editable = Boolean(actions && folderKey && folderKey !== UNGROUPED_KEY);
   const renaming = Boolean(editable && actions && folderKey && actions.renamingId === folderKey);
+
+  // 「全部书签」行没有 folderKey，因此天然不是落点；「未分组」行落到默认容器上，
+  // 否则就只能往文件夹里挪、挪不出来
+  const dropId = folderKey
+    ? folderKey === UNGROUPED_KEY
+      ? ungroupedId
+      : folderKey
+    : undefined;
+  const highlighted = Boolean(dropId && drag?.over === dropId);
 
   if (renaming && actions && folderKey) {
     return (
@@ -125,7 +147,13 @@ function FolderItem({
   }
 
   return (
-    <div className="flex items-center gap-0.5">
+    <div
+      className={cn(
+        'flex items-center gap-0.5 rounded-lg',
+        highlighted && 'bg-primary/10 ring-2 ring-primary/40',
+      )}
+      {...(dropId && drag ? dropProps(dropId, drag) : {})}
+    >
       <button
         type="button"
         onClick={onClick}

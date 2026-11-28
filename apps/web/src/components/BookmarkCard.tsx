@@ -1,7 +1,16 @@
 import { useState, type CSSProperties } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { type Bookmark, type LinkHealthRecord } from '@qianxu/shared';
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { InlineField, requireHttpUrl } from '@/components/InlineField';
+import { DRAG_MIME } from '@/lib/drag';
+import type { MoveTarget } from '@/lib/folders';
 import { cn } from '@/lib/utils';
 
 const MONOGRAM_HUES = [262, 292, 338, 22, 152, 198, 276, 68];
@@ -58,6 +67,12 @@ interface BookmarkCardProps {
   onSetUrl?: (id: string, url: string) => void;
   /** 本地校验没过时不提交，把原因交给页面统一提示 */
   onInvalid?: (message: string) => void;
+  /** 拖动这张卡片要带走的全部 id：选中时是整组，否则只有自己 */
+  dragIds?: string[];
+  /** 省略即不提供「移动到」，卡片也不再挂拖拽 */
+  moveTargets?: MoveTarget[];
+  onMoveTo?: (id: string, folderId: string) => void;
+  onDragEnd?: () => void;
 }
 
 export function BookmarkCard({
@@ -70,8 +85,13 @@ export function BookmarkCard({
   onRename,
   onSetUrl,
   onInvalid = () => {},
+  dragIds,
+  moveTargets,
+  onMoveTo,
+  onDragEnd,
 }: BookmarkCardProps) {
   const [iconFailed, setIconFailed] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   let host = bookmark.url;
   try {
@@ -131,13 +151,28 @@ export function BookmarkCard({
   // 编辑态刻意不用 <a>：链接卡片要挡住的是全部跳转路径，
   // 只 preventDefault 掉 onClick 会漏掉中键和回车，点标题改名却把页面跳走是最糟的观感。
   if (editMode) {
+    // 已经在当前文件夹里的目标不必出现在「移动到」里
+    const targets = (moveTargets ?? []).filter((target) => target.id !== bookmark.folderId);
+
     return (
       <div
         style={style}
+        draggable={targets.length > 0}
+        onDragStart={(event) => {
+          if (targets.length === 0) return;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData(DRAG_MIME, JSON.stringify(dragIds ?? [bookmark.id]));
+          setDragging(true);
+        }}
+        onDragEnd={() => {
+          setDragging(false);
+          onDragEnd?.();
+        }}
         className={cn(
           shell,
           'focus-visible:ring-[3px] focus-visible:ring-ring/30',
           selected ? 'border-primary/60 bg-accent/40' : 'hover:border-ring/40',
+          dragging && 'opacity-50',
         )}
       >
         <label className="absolute top-2 left-2 flex cursor-pointer items-center gap-1">
@@ -149,6 +184,32 @@ export function BookmarkCard({
           />
           <span className="sr-only">选择「{title}」</span>
         </label>
+
+        {targets.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-card-menu={bookmark.id}
+                aria-label={`把「${title}」移动到`}
+                className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-70 outline-none transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/30 data-[state=open]:opacity-100"
+              >
+                <MoreHorizontal className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-[60vh] overflow-y-auto">
+              {targets.map((target) => (
+                <DropdownMenuItem
+                  key={target.id}
+                  style={{ paddingLeft: `${8 + target.depth * 14}px` }}
+                  onSelect={() => onMoveTo?.(bookmark.id, target.id)}
+                >
+                  {target.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {icon}
 

@@ -69,7 +69,9 @@ import {
 import { EXTENSION_DOWNLOAD_URL } from '@/lib/constants';
 import {
   ALL_FOLDERS,
+  UNGROUPED_KEY,
   buildFolderStats,
+  buildMoveTargets,
   createFolderIndex,
   folderLabelOf,
   folderTitlesOf,
@@ -78,6 +80,7 @@ import {
   type BookmarkGroup,
   type FolderStat,
 } from '@/lib/folders';
+import { dropProps, type DragState } from '@/lib/drag';
 import { parseBookmarksJson } from '@/lib/import';
 import {
   loadClickStats,
@@ -135,6 +138,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
 
   const clickStatsRef = useRef<ClickStats>({});
   const fromFileRef = useRef(false);
@@ -408,6 +413,31 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     [folderNodes, submitOps],
   );
 
+  const moveBookmarks = useCallback(
+    async (ids: string[], folderId: string) => {
+      if (ids.length === 0) return;
+      await submitOps(ids.map((id) => ({ kind: 'move' as const, id, intoFolderId: folderId })));
+      setPendingFocusId(ids[0] ?? null);
+    },
+    [submitOps],
+  );
+
+  /**
+   * 移动后把焦点接回那张卡片的新位置。
+   *
+   * 卡片会随分组重挂，Radix 想归还焦点时原来的触发器已经不在 DOM 里，焦点就掉到 body，
+   * 键盘用户每移一次都得重新 Tab 一遍。等书签落地后再找一次，找不到就算了——
+   * 移进当前视图看不见的文件夹时，本来也没有可去的地方。
+   */
+  useEffect(() => {
+    if (!pendingFocusId) return;
+    const trigger = [...document.querySelectorAll('[data-card-menu]')].find(
+      (element) => element.getAttribute('data-card-menu') === pendingFocusId,
+    );
+    setPendingFocusId(null);
+    if (trigger instanceof HTMLElement) trigger.focus();
+  }, [bookmarks, pendingFocusId]);
+
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -429,13 +459,14 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     await submitOps(ids.map((id) => ({ kind: 'remove' as const, id })));
   }, [selectedIds, submitOps]);
 
-  // 退出编辑态就把选择、报错、待确认弹窗和文件夹改名一起收掉，别留下半截状态
+  // 退出编辑态就把选择、报错、待确认弹窗、文件夹改名和拖拽高亮一起收掉
   useEffect(() => {
     if (editMode) return;
     setSelected(new Set());
     setEditError(null);
     setConfirmingDelete(false);
     setRenamingFolderId(null);
+    setDragOver(null);
   }, [editMode]);
 
   const renderCard = (bookmark: Bookmark) => (
@@ -450,6 +481,10 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
       onRename={handleRename}
       onSetUrl={handleSetUrl}
       onInvalid={setEditError}
+      dragIds={selected.has(bookmark.id) ? selectedIds : [bookmark.id]}
+      moveTargets={folderActions ? moveTargets : undefined}
+      onMoveTo={(id, folderId) => void moveBookmarks([id], folderId)}
+      onDragEnd={() => setDragOver(null)}
     />
   );
 
@@ -547,6 +582,23 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const showSubfolders =
     activeFolder !== ALL_FOLDERS && subfolders.length > (folderActions ? 0 : 1);
 
+  const moveTargets = useMemo(
+    () => buildMoveTargets(folderNodes, folderIndex),
+    [folderNodes, folderIndex],
+  );
+
+  /** 落点 id：「未分组」不是节点，要换成默认容器，否则挪不出文件夹 */
+  const dropIdOf = (key: string) =>
+    key === UNGROUPED_KEY ? folderIndex.defaultContainerId : key;
+
+  const drag: DragState | undefined = folderActions
+    ? {
+        over: dragOver,
+        setOver: setDragOver,
+        onDrop: (ids, folderId) => void moveBookmarks(ids, folderId),
+      }
+    : undefined;
+
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
       <TopNav
@@ -574,6 +626,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
             onSelectFolder={selectFolder}
             allKey={ALL_FOLDERS}
             actions={folderActions}
+            drag={drag}
+            ungroupedId={folderIndex.defaultContainerId}
           />
         )}
 
@@ -653,6 +707,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                     onSelect={() => setActiveSubfolder(subfolder.key)}
                     actions={folderActions}
                     folderKey={subfolder.key}
+                    drag={drag}
                   />
                 ))}
               </div>
@@ -832,9 +887,17 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
 
             {visible.length > 0 && showGroups && (
               <div className="mt-5 space-y-8">
-                {groups.map((group) => (
+                {groups.map((group) => {
+                  const targetId = dropIdOf(group.key);
+                  return (
                   <section key={group.key} aria-label={group.label}>
-                    <div className="flex items-baseline gap-2">
+                    <div
+                      className={cn(
+                        'flex items-baseline gap-2 rounded-md',
+                        drag?.over === targetId && 'bg-primary/10 ring-2 ring-primary/40',
+                      )}
+                      {...(drag && targetId ? dropProps(targetId, drag) : {})}
+                    >
                       <h3 className="flex items-center gap-1.5 text-[13px] font-medium">
                         <Folder className="size-3.5 text-muted-foreground" />
                         {group.label}
@@ -847,7 +910,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                       {group.bookmarks.map(renderCard)}
                     </div>
                   </section>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -937,6 +1001,7 @@ function SubfolderChip({
   onSelect,
   actions,
   folderKey,
+  drag,
 }: {
   label: string;
   hint: string;
@@ -946,8 +1011,10 @@ function SubfolderChip({
   /** 只有重命名：页面只导航两级，三级文件夹建出来也看不见、点不到 */
   actions?: FolderActions;
   folderKey?: string;
+  drag?: DragState;
 }) {
   const renaming = Boolean(actions && folderKey && actions.renamingId === folderKey);
+  const highlighted = Boolean(folderKey && drag?.over === folderKey);
 
   if (renaming && actions && folderKey) {
     return (
@@ -976,7 +1043,9 @@ function SubfolderChip({
         active
           ? 'border-transparent bg-accent font-medium text-foreground'
           : 'bg-card text-muted-foreground',
+        highlighted && 'ring-2 ring-primary/50',
       )}
+      {...(folderKey && drag ? dropProps(folderKey, drag) : {})}
     >
       <button
         type="button"
