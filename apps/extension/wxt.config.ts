@@ -55,9 +55,14 @@ export default defineConfig({
         'storage',
         'bookmarks',
         'activeTab',
+        'alarms',
         // favicon API 目前只有 Chromium 系浏览器支持
         ...(browser === 'chrome' ? ['favicon'] : []),
       ],
+      // 健康度监测要能读到收藏夹里任意站点的响应状态码；
+      // 页面自身发起的 fetch 会被 CORS 挡住，只有扩展上下文拿到 host 授权后才读得到。
+      // 副作用是安装时会提示「读取并更改您在所有网站上的数据」。
+      host_permissions: ['<all_urls>'],
       ...(browser === 'chrome'
         ? {
             // 页面用 <img> 加载 _favicon 时，资源必须对站点可访问

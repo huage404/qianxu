@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Download, RotateCw, Upload } from 'lucide-react';
+import { Download, RotateCw, ShieldAlert, Upload } from 'lucide-react';
 
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { LogoMark } from '@/components/LogoMark';
@@ -11,6 +11,10 @@ import { cn } from '@/lib/utils';
 
 const REPO_URL = 'https://github.com/huage404/qianxu';
 
+const HEALTH_HINT =
+  '插件在你本机逐个探测这些链接是否还能访问。' +
+  '「可疑」多是站点拒绝了程序化请求，链接本身未必失效。';
+
 interface TopNavProps {
   query: string;
   onQueryChange: (value: string) => void;
@@ -20,6 +24,10 @@ interface TopNavProps {
   checking: boolean;
   /** 插件检测完成前为 null，此时不展示新标签页入口 */
   newTabState: NewTabState | null;
+  /** 无法访问与被拦截的链接数，为 0 时不展示入口 */
+  attentionCount: number;
+  attentionOnly: boolean;
+  onToggleAttention: () => void;
 }
 
 export function TopNav({
@@ -30,6 +38,9 @@ export function TopNav({
   onRefresh,
   checking,
   newTabState,
+  attentionCount,
+  attentionOnly,
+  onToggleAttention,
 }: TopNavProps) {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background">
@@ -49,6 +60,23 @@ export function TopNav({
         </div>
 
         <div className="ml-auto flex items-center gap-1 lg:ml-3">
+          {attentionCount > 0 && (
+            <Button
+              variant={attentionOnly ? 'secondary' : 'ghost'}
+              size="sm"
+              aria-pressed={attentionOnly}
+              onClick={onToggleAttention}
+              title={HEALTH_HINT}
+              className={cn(
+                'text-muted-foreground hover:text-foreground',
+                attentionOnly && 'text-foreground',
+              )}
+            >
+              <ShieldAlert className="size-3.5 text-amber-600 dark:text-amber-500" />
+              <span className="hidden sm:inline">{attentionCount} 个需关注</span>
+              <span className="tabular-nums sm:hidden">{attentionCount}</span>
+            </Button>
+          )}
           {newTabState && <NewTabHint state={newTabState} />}
           <Button
             variant="ghost"

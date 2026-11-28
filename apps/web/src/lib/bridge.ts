@@ -4,8 +4,10 @@ import {
   bridgeWarn,
   isBookmarksResponse,
   isBookmarksUpdated,
+  isHealthUpdated,
   type Bookmark,
   type BookmarksResponse,
+  type LinkHealthMap,
   type WebToExtensionMessage,
 } from '@qianxu/shared';
 
@@ -14,13 +16,14 @@ import { createId } from '@/lib/id';
 const DEFAULT_TIMEOUT_MS = 800;
 
 export type BookmarksResult =
-  | { status: 'ok'; bookmarks: Bookmark[]; newTabOverride: boolean }
+  | { status: 'ok'; bookmarks: Bookmark[]; newTabOverride: boolean; health: LinkHealthMap }
   | { status: 'error'; newTabOverride: boolean }
   | { status: 'absent' };
 
 export interface BookmarksUpdate {
   ok: boolean;
   bookmarks: Bookmark[];
+  health: LinkHealthMap;
 }
 
 function requestOnce(timeoutMs: number): Promise<BookmarksResponse | null> {
@@ -93,6 +96,8 @@ export async function requestBookmarks(
     status: 'ok',
     bookmarks: response.bookmarks,
     newTabOverride: response.newTabOverride === true,
+    // 旧版本扩展不带该字段，页面此时不展示健康度
+    health: response.health ?? {},
   };
 }
 
@@ -101,7 +106,23 @@ export function subscribeBookmarks(listener: (update: BookmarksUpdate) => void):
     if (event.source !== window) return;
     if (!isBookmarksUpdated(event.data)) return;
     bridgeLog('收到插件主动推送', { ok: event.data.ok, count: event.data.bookmarks.length });
-    listener({ ok: event.data.ok !== false, bookmarks: event.data.bookmarks });
+    listener({
+      ok: event.data.ok !== false,
+      bookmarks: event.data.bookmarks,
+      health: event.data.health ?? {},
+    });
+  };
+  window.addEventListener('message', onMessage);
+  return () => window.removeEventListener('message', onMessage);
+}
+
+/** 轮询完成只会改健康度，单独一条通道，避免为此重读整个收藏夹 */
+export function subscribeHealth(listener: (health: LinkHealthMap) => void): () => void {
+  const onMessage = (event: MessageEvent) => {
+    if (event.source !== window) return;
+    if (!isHealthUpdated(event.data)) return;
+    bridgeLog('收到健康度推送', { count: Object.keys(event.data.health).length });
+    listener(event.data.health);
   };
   window.addEventListener('message', onMessage);
   return () => window.removeEventListener('message', onMessage);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Bookmark } from '@qianxu/shared';
+import type { Bookmark, LinkHealthMap, LinkHealthRecord } from '@qianxu/shared';
 import {
   BookmarkPlus,
   Clock3,
@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { requestBookmarks, subscribeBookmarks } from '@/lib/bridge';
+import { requestBookmarks, subscribeBookmarks, subscribeHealth } from '@/lib/bridge';
 import { EXTENSION_DOWNLOAD_URL } from '@/lib/constants';
 import { parseBookmarksJson } from '@/lib/import';
 import {
@@ -128,6 +128,14 @@ function matchesQuery(bookmark: Bookmark, query: string): boolean {
   return haystack.includes(query);
 }
 
+/**
+ * 需要关注的链接。suspect 也算进来而不是只挑 dead：
+ * 它代表「探测被挡，无法确认」，用户有权知道哪些是自己点开的而不是机器判定的。
+ */
+function needsAttention(record: LinkHealthRecord | undefined): boolean {
+  return record?.status === 'dead' || record?.status === 'suspect';
+}
+
 interface HomeShellProps {
   icpNumber?: string;
 }
@@ -143,6 +151,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [sortMode, setSortMode] = useState<SortMode>('recent');
   const [clickStats, setClickStats] = useState<ClickStats>({});
   const [newTabOverride, setNewTabOverride] = useState(false);
+  const [health, setHealth] = useState<LinkHealthMap>({});
+  const [attentionOnly, setAttentionOnly] = useState(false);
 
   const clickStatsRef = useRef<ClickStats>({});
   const fromFileRef = useRef(false);
@@ -171,6 +181,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setFromFile(false);
     fromFileRef.current = false;
     setBookmarks(result.bookmarks);
+    setHealth(result.health);
   }, []);
 
   useEffect(() => {
@@ -185,8 +196,19 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
       setStatus('connected');
       setImportError(null);
       setBookmarks(update.bookmarks);
+      setHealth(update.health);
     });
   }, [loadFromExtension]);
+
+  useEffect(
+    () =>
+      subscribeHealth((next) => {
+        // 文件导入的书签和收藏夹不是同一批 URL，此时不套用插件的探测结果
+        if (fromFileRef.current) return;
+        setHealth(next);
+      }),
+    [],
+  );
 
   const ordered = useMemo(
     () => sortBookmarks(bookmarks, sortMode, clickStats),
@@ -225,17 +247,28 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
 
   const normalizedQuery = query.trim().toLowerCase();
 
+  const attentionCount = useMemo(
+    () => bookmarks.filter((bookmark) => needsAttention(health[bookmark.url])).length,
+    [bookmarks, health],
+  );
+
+  // 坏链接被删掉或复测翻回正常后，不该把用户留在一个空列表里
+  useEffect(() => {
+    if (attentionOnly && attentionCount === 0) setAttentionOnly(false);
+  }, [attentionOnly, attentionCount]);
+
   const visible = useMemo(() => {
     const scoped = ordered.filter(
       (bookmark) =>
         (activeFolder === ALL_FOLDERS || folderKeyAt(bookmark, 1) === activeFolder) &&
         (activeFolder === ALL_FOLDERS ||
           activeSubfolder === ALL_FOLDERS ||
-          folderKeyAt(bookmark, 2) === activeSubfolder),
+          folderKeyAt(bookmark, 2) === activeSubfolder) &&
+        (!attentionOnly || needsAttention(health[bookmark.url])),
     );
     if (!normalizedQuery) return scoped;
     return scoped.filter((bookmark) => matchesQuery(bookmark, normalizedQuery));
-  }, [ordered, activeFolder, activeSubfolder, normalizedQuery]);
+  }, [ordered, activeFolder, activeSubfolder, attentionOnly, health, normalizedQuery]);
 
   const groupDepth = activeFolder === ALL_FOLDERS ? 1 : 2;
   const groups = useMemo(
@@ -313,6 +346,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setQuery('');
     setActiveFolder(ALL_FOLDERS);
     setActiveSubfolder(ALL_FOLDERS);
+    setAttentionOnly(false);
   };
 
   useEffect(() => {
@@ -371,6 +405,9 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
         onRefresh={loadFromExtension}
         checking={checking}
         newTabState={newTabState}
+        attentionCount={status === 'connected' && !fromFile ? attentionCount : 0}
+        attentionOnly={attentionOnly}
+        onToggleAttention={() => setAttentionOnly((value) => !value)}
       />
 
       <div className="relative mx-auto flex w-full max-w-[1200px] flex-1 flex-col px-5 sm:px-8 lg:min-h-0 lg:flex-row lg:gap-10 lg:overflow-hidden">
@@ -434,7 +471,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                   </Badge>
                 )}
                 <span className="text-[11px] tabular-nums text-muted-foreground">
-                  {normalizedQuery || activeFolder !== ALL_FOLDERS
+                  {normalizedQuery || activeFolder !== ALL_FOLDERS || attentionOnly
                     ? `${visible.length} / ${total} 个`
                     : `${total} 个`}
                 </span>
@@ -616,6 +653,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                         <BookmarkCard
                           key={bookmark.id}
                           bookmark={bookmark}
+                          health={health[bookmark.url]}
                           onOpen={handleOpenBookmark}
                         />
                       ))}
@@ -631,6 +669,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                   <BookmarkCard
                     key={bookmark.id}
                     bookmark={bookmark}
+                    health={health[bookmark.url]}
                     onOpen={handleOpenBookmark}
                   />
                 ))}

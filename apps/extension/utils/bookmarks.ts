@@ -5,6 +5,8 @@ import { flattenBookmarkTree } from '@/utils/bookmark-tree';
 
 export const EXT_MSG_GET_BOOKMARKS = 'qianxu:get-bookmarks';
 export const EXT_MSG_BOOKMARKS_CHANGED = 'qianxu:bookmarks-changed';
+/** 轮询测完新一轮，通知页面只刷新健康度，不必重读收藏夹 */
+export const EXT_MSG_HEALTH_CHANGED = 'qianxu:health-changed';
 
 export async function listBrowserBookmarks(): Promise<Bookmark[]> {
   const tree = await browser.bookmarks.getTree();

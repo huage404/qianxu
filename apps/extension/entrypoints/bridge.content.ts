@@ -4,11 +4,17 @@ import {
   bridgeLog,
   bridgeWarn,
   isBookmarksRequest,
+  isLinkHealthMap,
   type Bookmark,
   type ExtensionToWebMessage,
+  type LinkHealthMap,
 } from '@qianxu/shared';
 
-import { EXT_MSG_BOOKMARKS_CHANGED, EXT_MSG_GET_BOOKMARKS } from '@/utils/bookmarks';
+import {
+  EXT_MSG_BOOKMARKS_CHANGED,
+  EXT_MSG_GET_BOOKMARKS,
+  EXT_MSG_HEALTH_CHANGED,
+} from '@/utils/bookmarks';
 import { SITE_ORIGINS, isAllowedOrigin, toMatchPatterns } from '@/utils/site';
 
 // 注意：manifest 的 matches 同样在构建期固化。若当前页面的协议或域名不匹配，
@@ -41,36 +47,51 @@ export default defineContentScript({
     });
 
     browser.runtime.onMessage.addListener((message) => {
-      if ((message as { type?: unknown } | null)?.type !== EXT_MSG_BOOKMARKS_CHANGED) return;
-      void push();
+      const type = (message as { type?: unknown } | null)?.type;
+      if (type === EXT_MSG_BOOKMARKS_CHANGED) {
+        void push();
+        return;
+      }
+      if (type === EXT_MSG_HEALTH_CHANGED) {
+        pushHealth((message as { health?: unknown } | null)?.health);
+      }
     });
   },
 });
 
-async function fetchBookmarks(): Promise<{ ok: boolean; bookmarks: Bookmark[] }> {
+async function fetchBookmarks(): Promise<{
+  ok: boolean;
+  bookmarks: Bookmark[];
+  health: LinkHealthMap;
+}> {
   try {
     const reply = (await browser.runtime.sendMessage({
       type: EXT_MSG_GET_BOOKMARKS,
-    })) as { bookmarks?: Bookmark[] } | undefined;
+    })) as { bookmarks?: Bookmark[]; health?: unknown } | undefined;
     if (!Array.isArray(reply?.bookmarks)) {
       bridgeWarn('后台未返回书签列表', { reply });
-      return { ok: false, bookmarks: [] };
+      return { ok: false, bookmarks: [], health: {} };
     }
-    return { ok: true, bookmarks: reply.bookmarks };
+    return {
+      ok: true,
+      bookmarks: reply.bookmarks,
+      health: isLinkHealthMap(reply.health) ? reply.health : {},
+    };
   } catch (error) {
     bridgeWarn('向后台请求书签失败', error);
-    return { ok: false, bookmarks: [] };
+    return { ok: false, bookmarks: [], health: {} };
   }
 }
 
 async function respond(requestId: string) {
-  const { ok, bookmarks } = await fetchBookmarks();
+  const { ok, bookmarks, health } = await fetchBookmarks();
   const response: ExtensionToWebMessage = {
     source: MSG_SOURCE_EXT,
     type: 'BOOKMARKS_RESPONSE',
     requestId,
     ok,
     bookmarks,
+    health,
     newTabOverride: takesOverNewTab(),
   };
   bridgeLog('回应该请求', { requestId, ok, count: bookmarks.length });
@@ -83,13 +104,29 @@ function takesOverNewTab(): boolean {
 }
 
 async function push() {
-  const { ok, bookmarks } = await fetchBookmarks();
+  const { ok, bookmarks, health } = await fetchBookmarks();
   const response: ExtensionToWebMessage = {
     source: MSG_SOURCE_EXT,
     type: 'BOOKMARKS_UPDATED',
     ok,
     bookmarks,
+    health,
   };
   bridgeLog('推送书签变更', { ok, count: bookmarks.length });
+  window.postMessage(response, window.location.origin);
+}
+
+/** 轮询只改健康度，不值得让页面重读一遍收藏夹 */
+function pushHealth(value: unknown) {
+  if (!isLinkHealthMap(value)) {
+    bridgeWarn('后台推送的健康度形状不对，已忽略', { value });
+    return;
+  }
+  const response: ExtensionToWebMessage = {
+    source: MSG_SOURCE_EXT,
+    type: 'HEALTH_UPDATED',
+    health: value,
+  };
+  bridgeLog('推送健康度更新', { count: Object.keys(value).length });
   window.postMessage(response, window.location.origin);
 }
