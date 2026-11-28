@@ -1,16 +1,18 @@
 import { browser } from 'wxt/browser';
 import type { Bookmark } from '@qianxu/shared';
 
-import { flattenBookmarkTree } from '@/utils/bookmark-tree';
+import { flattenBookmarkTree, type FlatBookmarkTree } from '@/utils/bookmark-tree';
 
 export const EXT_MSG_GET_BOOKMARKS = 'qianxu:get-bookmarks';
+export const EXT_MSG_MUTATE_BOOKMARKS = 'qianxu:mutate-bookmarks';
 export const EXT_MSG_BOOKMARKS_CHANGED = 'qianxu:bookmarks-changed';
 /** 轮询测完新一轮，通知页面只刷新健康度，不必重读收藏夹 */
 export const EXT_MSG_HEALTH_CHANGED = 'qianxu:health-changed';
 
-export async function listBrowserBookmarks(): Promise<Bookmark[]> {
+export async function listBrowserBookmarks(): Promise<FlatBookmarkTree> {
   const tree = await browser.bookmarks.getTree();
-  return withFavicons(flattenBookmarkTree(tree));
+  const flat = flattenBookmarkTree(tree);
+  return { bookmarks: withFavicons(flat.bookmarks), folders: flat.folders };
 }
 
 function withFavicons(bookmarks: Bookmark[]): Bookmark[] {

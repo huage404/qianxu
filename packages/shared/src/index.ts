@@ -2,12 +2,29 @@ export interface Bookmark {
   id: string;
   title: string;
   url: string;
+  /** 直接父文件夹的节点 id；编辑操作与区分同名文件夹都靠它 */
+  folderId?: string;
   folder?: string;
   /** 浏览器默认容器（书签栏、其他书签等）之下的完整文件夹路径 */
   folderPath?: string[];
   createdAt: number;
   /** Chrome 扩展提供的 favicon 地址，由页面直接渲染 */
   faviconUrl?: string;
+}
+
+/**
+ * 书签树里的文件夹节点。
+ * 只靠标题路径无法区分「书签栏/开发」和「其他书签/开发」，
+ * 而重命名、移动、删除都必须指名到具体节点，所以身份一律用 id。
+ */
+export interface BookmarkFolder {
+  id: string;
+  title: string;
+  parentId: string;
+  /** 书签栏、其他书签这类浏览器默认容器：不可重命名、不可删除 */
+  builtin: boolean;
+  /** 默认容器之下的标题路径，仅用于展示层级 */
+  path: string[];
 }
 
 export const BOOKMARKS_STORAGE_KEY = 'bookmarks';
@@ -83,6 +100,8 @@ export interface BookmarksResponse {
   newTabOverride?: boolean;
   /** 旧版本扩展不带该字段，页面此时不展示健康度 */
   health?: LinkHealthMap;
+  /** 旧版本扩展不带该字段，此时页面无法执行编辑操作 */
+  folders?: BookmarkFolder[];
 }
 
 export interface BookmarksUpdated {
@@ -92,6 +111,7 @@ export interface BookmarksUpdated {
   ok?: boolean;
   bookmarks: Bookmark[];
   health?: LinkHealthMap;
+  folders?: BookmarkFolder[];
 }
 
 /** 轮询完成与书签变更是两件事，否则后台测完要等重开页面才更新 */
@@ -101,8 +121,52 @@ export interface HealthUpdated {
   health: LinkHealthMap;
 }
 
-export type WebToExtensionMessage = BookmarksRequest;
-export type ExtensionToWebMessage = BookmarksResponse | BookmarksUpdated | HealthUpdated;
+/**
+ * 一次书签编辑。批量提交，逐条回执。
+ * 每个 op 都指向节点 id，页面不能靠标题猜目标。
+ */
+export type BookmarkOp =
+  | { kind: 'rename'; id: string; title: string }
+  | { kind: 'setUrl'; id: string; url: string }
+  | { kind: 'move'; id: string; intoFolderId: string }
+  | { kind: 'remove'; id: string }
+  | { kind: 'removeFolder'; id: string }
+  | { kind: 'createFolder'; title: string; parentId: string };
+
+/** 单次请求的操作上限，够全选删除两百多个书签，同时拦住失控的批量写入 */
+export const MAX_OPS_PER_REQUEST = 500;
+
+export interface BookmarksMutateRequest {
+  source: typeof MSG_SOURCE_WEB;
+  type: 'BOOKMARKS_MUTATE';
+  requestId: string;
+  ops: BookmarkOp[];
+}
+
+export interface BookmarkOpResult {
+  ok: boolean;
+  /** 失败原因，供页面逐条提示；成功时可能带上服务端实际写入的标题或链接 */
+  error?: string;
+}
+
+export interface BookmarksMutateResponse {
+  source: typeof MSG_SOURCE_EXT;
+  type: 'BOOKMARKS_MUTATE_RESPONSE';
+  requestId: string;
+  /** 整批是否被接受；单条失败不影响它，见 results */
+  ok: boolean;
+  results: BookmarkOpResult[];
+  bookmarks: Bookmark[];
+  folders: BookmarkFolder[];
+  health?: LinkHealthMap;
+}
+
+export type WebToExtensionMessage = BookmarksRequest | BookmarksMutateRequest;
+export type ExtensionToWebMessage =
+  | BookmarksResponse
+  | BookmarksUpdated
+  | HealthUpdated
+  | BookmarksMutateResponse;
 
 export function isBookmarksRequest(value: unknown): value is BookmarksRequest {
   if (typeof value !== 'object' || value === null) return false;
@@ -125,7 +189,8 @@ export function isBookmarksResponse(value: unknown): value is BookmarksResponse 
     isOptionalBoolean(msg.ok) &&
     isOptionalBoolean(msg.newTabOverride) &&
     Array.isArray(msg.bookmarks) &&
-    isOptionalHealthMap(msg.health)
+    isOptionalHealthMap(msg.health) &&
+    isOptionalFolderList(msg.folders)
   );
 }
 
@@ -137,7 +202,8 @@ export function isBookmarksUpdated(value: unknown): value is BookmarksUpdated {
     msg.type === 'BOOKMARKS_UPDATED' &&
     isOptionalBoolean(msg.ok) &&
     Array.isArray(msg.bookmarks) &&
-    isOptionalHealthMap(msg.health)
+    isOptionalHealthMap(msg.health) &&
+    isOptionalFolderList(msg.folders)
   );
 }
 
@@ -149,6 +215,87 @@ export function isHealthUpdated(value: unknown): value is HealthUpdated {
     msg.type === 'HEALTH_UPDATED' &&
     isLinkHealthMap(msg.health)
   );
+}
+
+/**
+ * 写入请求的守卫。这条通道会改动用户真实的浏览器书签，
+ * 所以逐个 op 校验形状，而不是只看 Array.isArray。
+ */
+export function isBookmarksMutateRequest(value: unknown): value is BookmarksMutateRequest {
+  if (typeof value !== 'object' || value === null) return false;
+  const msg = value as Record<string, unknown>;
+  return (
+    msg.source === MSG_SOURCE_WEB &&
+    msg.type === 'BOOKMARKS_MUTATE' &&
+    typeof msg.requestId === 'string' &&
+    msg.requestId.length > 0 &&
+    Array.isArray(msg.ops) &&
+    msg.ops.length > 0 &&
+    msg.ops.length <= MAX_OPS_PER_REQUEST &&
+    (msg.ops as unknown[]).every(isBookmarkOp)
+  );
+}
+
+export function isBookmarksMutateResponse(value: unknown): value is BookmarksMutateResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const msg = value as Record<string, unknown>;
+  return (
+    msg.source === MSG_SOURCE_EXT &&
+    msg.type === 'BOOKMARKS_MUTATE_RESPONSE' &&
+    typeof msg.requestId === 'string' &&
+    typeof msg.ok === 'boolean' &&
+    Array.isArray(msg.results) &&
+    (msg.results as unknown[]).every(isBookmarkOpResult) &&
+    Array.isArray(msg.bookmarks) &&
+    Array.isArray(msg.folders) &&
+    isOptionalHealthMap(msg.health)
+  );
+}
+
+export function isBookmarkOp(value: unknown): value is BookmarkOp {
+  if (typeof value !== 'object' || value === null) return false;
+  const op = value as Record<string, unknown>;
+  switch (op.kind) {
+    case 'rename':
+      return typeof op.id === 'string' && typeof op.title === 'string';
+    case 'setUrl':
+      return typeof op.id === 'string' && typeof op.url === 'string';
+    case 'move':
+      return typeof op.id === 'string' && typeof op.intoFolderId === 'string';
+    case 'remove':
+    case 'removeFolder':
+      return typeof op.id === 'string';
+    case 'createFolder':
+      return typeof op.title === 'string' && typeof op.parentId === 'string';
+    default:
+      return false;
+  }
+}
+
+function isBookmarkOpResult(value: unknown): value is BookmarkOpResult {
+  if (typeof value !== 'object' || value === null) return false;
+  const result = value as Record<string, unknown>;
+  return (
+    typeof result.ok === 'boolean' &&
+    (result.error === undefined || typeof result.error === 'string')
+  );
+}
+
+function isBookmarkFolder(value: unknown): value is BookmarkFolder {
+  if (typeof value !== 'object' || value === null) return false;
+  const folder = value as Record<string, unknown>;
+  return (
+    typeof folder.id === 'string' &&
+    typeof folder.title === 'string' &&
+    typeof folder.parentId === 'string' &&
+    typeof folder.builtin === 'boolean' &&
+    Array.isArray(folder.path) &&
+    folder.path.every((segment) => typeof segment === 'string')
+  );
+}
+
+function isOptionalFolderList(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(isBookmarkFolder));
 }
 
 function isOptionalBoolean(value: unknown): boolean {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Bookmark, LinkHealthMap, LinkHealthRecord } from '@qianxu/shared';
+import type { Bookmark, BookmarkFolder, LinkHealthMap, LinkHealthRecord } from '@qianxu/shared';
 import {
   BookmarkPlus,
   Clock3,
@@ -153,6 +153,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [newTabOverride, setNewTabOverride] = useState(false);
   const [health, setHealth] = useState<LinkHealthMap>({});
   const [attentionOnly, setAttentionOnly] = useState(false);
+  const [folderNodes, setFolderNodes] = useState<BookmarkFolder[]>([]);
+  const [editMode, setEditMode] = useState(false);
 
   const clickStatsRef = useRef<ClickStats>({});
   const fromFileRef = useRef(false);
@@ -181,6 +183,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setFromFile(false);
     fromFileRef.current = false;
     setBookmarks(result.bookmarks);
+    setFolderNodes(result.folders);
     setHealth(result.health);
   }, []);
 
@@ -196,6 +199,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
       setStatus('connected');
       setImportError(null);
       setBookmarks(update.bookmarks);
+      setFolderNodes(update.folders);
       setHealth(update.health);
     });
   }, [loadFromExtension]);
@@ -328,6 +332,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setActiveFolder(ALL_FOLDERS);
     setActiveSubfolder(ALL_FOLDERS);
     setBookmarks(parsed);
+    // 文件里的书签没有可写的后端，文件夹节点表对它没有意义
+    setFolderNodes([]);
   };
 
   const handleOpenBookmark = useCallback((bookmark: Bookmark) => {
@@ -395,6 +401,23 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
           ? '读取浏览器收藏夹失败'
           : '未检测到书签插件';
 
+  /**
+   * 编辑态不可用的原因，null 表示可以编辑。
+   * 文件夹节点表是所有编辑操作的身份来源，旧版插件不下发它，此时页面只能读。
+   */
+  const editHint = fromFile
+    ? '导入的书签文件是只读的，编辑针对浏览器收藏夹本身'
+    : status !== 'connected'
+      ? '连上书签插件后才能编辑收藏夹'
+      : folderNodes.length === 0 && total > 0
+        ? '插件版本过旧，升级后才能编辑收藏夹'
+        : null;
+
+  // 从可编辑掉到不可编辑（切去读文件、插件断开）时退出编辑态，别把界面停在半编辑
+  useEffect(() => {
+    if (editHint) setEditMode(false);
+  }, [editHint]);
+
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
       <TopNav
@@ -408,6 +431,9 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
         attentionCount={status === 'connected' && !fromFile ? attentionCount : 0}
         attentionOnly={attentionOnly}
         onToggleAttention={() => setAttentionOnly((value) => !value)}
+        editMode={editMode}
+        editHint={editHint}
+        onToggleEdit={() => setEditMode((value) => !value)}
       />
 
       <div className="relative mx-auto flex w-full max-w-[1200px] flex-1 flex-col px-5 sm:px-8 lg:min-h-0 lg:flex-row lg:gap-10 lg:overflow-hidden">

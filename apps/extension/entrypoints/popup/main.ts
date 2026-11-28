@@ -32,7 +32,7 @@ async function addCurrentPage() {
   }
 
   try {
-    const bookmarks = await listBrowserBookmarks();
+    const { bookmarks } = await listBrowserBookmarks();
     if (bookmarks.some((bookmark) => bookmark.url === url)) {
       setStatus('该页面已在收藏夹中');
       return;
@@ -91,7 +91,8 @@ function hostOf(url: string): string {
 }
 
 async function render() {
-  const bookmarks = [...(await listBrowserBookmarks())].sort((a, b) => b.createdAt - a.createdAt);
+  const { bookmarks: list } = await listBrowserBookmarks();
+  const bookmarks = [...list].sort((a, b) => b.createdAt - a.createdAt);
   countEl.textContent = bookmarks.length ? String(bookmarks.length) : '';
   listEl.replaceChildren();
 
@@ -140,7 +141,7 @@ async function render() {
 
 addBtn.addEventListener('click', () => void addCurrentPage());
 exportBtn.addEventListener('click', () => {
-  void listBrowserBookmarks().then(exportBookmarks);
+  void listBrowserBookmarks().then(({ bookmarks }) => exportBookmarks(bookmarks));
 });
 
 const unwatch = watchBookmarks(() => void render());

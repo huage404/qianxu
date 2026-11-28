@@ -3,9 +3,12 @@ import {
   MSG_SOURCE_EXT,
   bridgeLog,
   bridgeWarn,
+  isBookmarksMutateRequest,
   isBookmarksRequest,
   isLinkHealthMap,
   type Bookmark,
+  type BookmarkFolder,
+  type BookmarksMutateRequest,
   type ExtensionToWebMessage,
   type LinkHealthMap,
 } from '@qianxu/shared';
@@ -14,6 +17,7 @@ import {
   EXT_MSG_BOOKMARKS_CHANGED,
   EXT_MSG_GET_BOOKMARKS,
   EXT_MSG_HEALTH_CHANGED,
+  EXT_MSG_MUTATE_BOOKMARKS,
 } from '@/utils/bookmarks';
 import { SITE_ORIGINS, isAllowedOrigin, toMatchPatterns } from '@/utils/site';
 
@@ -41,9 +45,18 @@ export default defineContentScript({
     window.addEventListener('message', (event) => {
       if (event.source !== window) return;
       if (event.origin !== window.location.origin) return;
-      if (!isBookmarksRequest(event.data)) return;
-      bridgeLog('收到页面请求', { requestId: event.data.requestId });
-      void respond(event.data.requestId);
+      if (isBookmarksRequest(event.data)) {
+        bridgeLog('收到页面请求', { requestId: event.data.requestId });
+        void respond(event.data.requestId);
+        return;
+      }
+      if (isBookmarksMutateRequest(event.data)) {
+        bridgeLog('收到页面编辑请求', {
+          requestId: event.data.requestId,
+          ops: event.data.ops.length,
+        });
+        void respondMutation(event.data);
+      }
     });
 
     browser.runtime.onMessage.addListener((message) => {
@@ -59,38 +72,47 @@ export default defineContentScript({
   },
 });
 
-async function fetchBookmarks(): Promise<{
+async function fetchTree(): Promise<{
   ok: boolean;
   bookmarks: Bookmark[];
+  folders: BookmarkFolder[];
   health: LinkHealthMap;
 }> {
+  const empty = {
+    ok: false,
+    bookmarks: [] as Bookmark[],
+    folders: [] as BookmarkFolder[],
+    health: {} as LinkHealthMap,
+  };
   try {
     const reply = (await browser.runtime.sendMessage({
       type: EXT_MSG_GET_BOOKMARKS,
-    })) as { bookmarks?: Bookmark[]; health?: unknown } | undefined;
+    })) as { bookmarks?: Bookmark[]; folders?: unknown; health?: unknown } | undefined;
     if (!Array.isArray(reply?.bookmarks)) {
       bridgeWarn('后台未返回书签列表', { reply });
-      return { ok: false, bookmarks: [], health: {} };
+      return empty;
     }
     return {
       ok: true,
       bookmarks: reply.bookmarks,
+      folders: Array.isArray(reply.folders) ? (reply.folders as BookmarkFolder[]) : [],
       health: isLinkHealthMap(reply.health) ? reply.health : {},
     };
   } catch (error) {
     bridgeWarn('向后台请求书签失败', error);
-    return { ok: false, bookmarks: [], health: {} };
+    return empty;
   }
 }
 
 async function respond(requestId: string) {
-  const { ok, bookmarks, health } = await fetchBookmarks();
+  const { ok, bookmarks, folders, health } = await fetchTree();
   const response: ExtensionToWebMessage = {
     source: MSG_SOURCE_EXT,
     type: 'BOOKMARKS_RESPONSE',
     requestId,
     ok,
     bookmarks,
+    folders,
     health,
     newTabOverride: takesOverNewTab(),
   };
@@ -104,15 +126,50 @@ function takesOverNewTab(): boolean {
 }
 
 async function push() {
-  const { ok, bookmarks, health } = await fetchBookmarks();
+  const { ok, bookmarks, folders, health } = await fetchTree();
   const response: ExtensionToWebMessage = {
     source: MSG_SOURCE_EXT,
     type: 'BOOKMARKS_UPDATED',
     ok,
     bookmarks,
+    folders,
     health,
   };
   bridgeLog('推送书签变更', { ok, count: bookmarks.length });
+  window.postMessage(response, window.location.origin);
+}
+
+/**
+ * 编辑请求原样转给后台，回执里带执行后的完整书签树。
+ * 后台不信任页面递来的节点 id，身份一律以执行时的当前树为准。
+ */
+async function respondMutation(request: BookmarksMutateRequest) {
+  let reply: Record<string, unknown> = {};
+  try {
+    reply =
+      ((await browser.runtime.sendMessage({
+        type: EXT_MSG_MUTATE_BOOKMARKS,
+        ops: request.ops,
+      })) as Record<string, unknown> | undefined) ?? {};
+  } catch (error) {
+    bridgeWarn('向后台提交书签编辑失败', error);
+  }
+
+  const response: ExtensionToWebMessage = {
+    source: MSG_SOURCE_EXT,
+    type: 'BOOKMARKS_MUTATE_RESPONSE',
+    requestId: request.requestId,
+    ok: reply.ok === true,
+    results: Array.isArray(reply.results) ? reply.results : [],
+    bookmarks: Array.isArray(reply.bookmarks) ? reply.bookmarks : [],
+    folders: Array.isArray(reply.folders) ? reply.folders : [],
+    health: isLinkHealthMap(reply.health) ? reply.health : {},
+  };
+  bridgeLog('回执书签编辑结果', {
+    requestId: request.requestId,
+    ok: response.ok,
+    ops: response.results.length,
+  });
   window.postMessage(response, window.location.origin);
 }
 

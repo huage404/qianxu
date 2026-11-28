@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Download, RotateCw, ShieldAlert, Upload } from 'lucide-react';
+import { Download, Pencil, RotateCw, ShieldAlert, Upload } from 'lucide-react';
 
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { LogoMark } from '@/components/LogoMark';
@@ -15,6 +15,8 @@ const HEALTH_HINT =
   '插件在你本机逐个探测这些链接是否还能访问。' +
   '「可疑」多是站点拒绝了程序化请求，链接本身未必失效。';
 
+const EDIT_HINT_ON = '改名、改链接、多选删除、拖动归类；改动直接写入浏览器收藏夹';
+
 interface TopNavProps {
   query: string;
   onQueryChange: (value: string) => void;
@@ -28,6 +30,10 @@ interface TopNavProps {
   attentionCount: number;
   attentionOnly: boolean;
   onToggleAttention: () => void;
+  editMode: boolean;
+  /** 非空即表示当前无法编辑，取值本身就是给用户看的原因 */
+  editHint: string | null;
+  onToggleEdit: () => void;
 }
 
 export function TopNav({
@@ -41,6 +47,9 @@ export function TopNav({
   attentionCount,
   attentionOnly,
   onToggleAttention,
+  editMode,
+  editHint,
+  onToggleEdit,
 }: TopNavProps) {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background">
@@ -78,6 +87,21 @@ export function TopNav({
             </Button>
           )}
           {newTabState && <NewTabHint state={newTabState} />}
+          <Button
+            variant={editMode ? 'secondary' : 'ghost'}
+            size="sm"
+            aria-pressed={editMode}
+            disabled={editHint !== null}
+            onClick={onToggleEdit}
+            title={editHint ?? (editMode ? '退出编辑，页面恢复只读' : EDIT_HINT_ON)}
+            className={cn(
+              'text-muted-foreground hover:text-foreground',
+              editMode && 'text-foreground',
+            )}
+          >
+            <Pencil className="size-3.5" />
+            <span className="hidden md:inline">{editMode ? '退出编辑' : '编辑'}</span>
+          </Button>
           <Button
             variant="ghost"
             size="sm"
