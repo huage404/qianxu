@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Bookmark, BookmarkFolder, LinkHealthMap, LinkHealthRecord } from '@qianxu/shared';
+import type {
+  Bookmark,
+  BookmarkFolder,
+  BookmarkOp,
+  LinkHealthMap,
+  LinkHealthRecord,
+} from '@qianxu/shared';
 import {
   BookmarkPlus,
   Clock3,
@@ -18,10 +24,21 @@ import {
 import { BookmarkCard } from '@/components/BookmarkCard';
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { BookmarksSidebar, type FolderStat } from '@/components/BookmarksSidebar';
+import { EditActionBar } from '@/components/EditActionBar';
 import { EmptyState } from '@/components/EmptyState';
 import type { NewTabState } from '@/components/NewTabHint';
 import { SearchBar } from '@/components/SearchBar';
 import { TopNav } from '@/components/TopNav';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,7 +49,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { requestBookmarks, subscribeBookmarks, subscribeHealth } from '@/lib/bridge';
+import { mutateBookmarks, requestBookmarks, subscribeBookmarks, subscribeHealth } from '@/lib/bridge';
 import { EXTENSION_DOWNLOAD_URL } from '@/lib/constants';
 import { parseBookmarksJson } from '@/lib/import';
 import {
@@ -155,6 +172,10 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [folderNodes, setFolderNodes] = useState<BookmarkFolder[]>([]);
   const [editMode, setEditMode] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [editError, setEditError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [mutating, setMutating] = useState(false);
 
   const clickStatsRef = useRef<ClickStats>({});
   const fromFileRef = useRef(false);
@@ -347,6 +368,90 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
     setSortMode(mode);
     saveSortMode(mode);
   };
+
+  /**
+   * 提交一批编辑，并以回执里的新树为准更新页面。
+   *
+   * 写入一律不重试：请求可能已经生效、只是回执丢了，重发会把同一批操作做两遍。
+   * 所以无响应时如实说明状态未知，让用户自己刷新，而不是假装成功。
+   */
+  const submitOps = useCallback(async (ops: BookmarkOp[]): Promise<boolean> => {
+    if (ops.length === 0) return false;
+    setMutating(true);
+    setEditError(null);
+    const result = await mutateBookmarks(ops);
+    setMutating(false);
+
+    if (result.status !== 'ok') {
+      setEditError('编辑未能确认，收藏夹可能已经改动。点右上角「刷新」可重新读取真实状态。');
+      return false;
+    }
+
+    setBookmarks(result.bookmarks);
+    setFolderNodes(result.folders);
+    setHealth(result.health);
+    const failed = result.results.filter((item) => !item.ok);
+    if (failed.length > 0) setEditError(failed[0]?.error ?? `${failed.length} 项未能完成`);
+    return failed.length === 0;
+  }, []);
+
+  const handleRename = useCallback(
+    (id: string, title: string) => {
+      void submitOps([{ kind: 'rename', id, title }]);
+    },
+    [submitOps],
+  );
+
+  const handleSetUrl = useCallback(
+    (id: string, url: string) => {
+      void submitOps([{ kind: 'setUrl', id, url }]);
+    },
+    [submitOps],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 只提交仍然存在于收藏夹里的选择：删除后 id 就没了，不能拿旧 id 去调写入
+  const selectedIds = useMemo(
+    () => bookmarks.filter((bookmark) => selected.has(bookmark.id)).map((bookmark) => bookmark.id),
+    [bookmarks, selected],
+  );
+
+  const runDelete = useCallback(async () => {
+    const ids = selectedIds;
+    setSelected(new Set());
+    await submitOps(ids.map((id) => ({ kind: 'remove' as const, id })));
+  }, [selectedIds, submitOps]);
+
+  // 退出编辑态就把选择、报错和待确认的弹窗一起收掉，别留下半截状态
+  useEffect(() => {
+    if (editMode) return;
+    setSelected(new Set());
+    setEditError(null);
+    setConfirmingDelete(false);
+  }, [editMode]);
+
+  const renderCard = (bookmark: Bookmark) => (
+    <BookmarkCard
+      key={bookmark.id}
+      bookmark={bookmark}
+      health={health[bookmark.url]}
+      onOpen={handleOpenBookmark}
+      editMode={editMode}
+      selected={selected.has(bookmark.id)}
+      onToggleSelect={toggleSelect}
+      onRename={handleRename}
+      onSetUrl={handleSetUrl}
+      onInvalid={setEditError}
+    />
+  );
 
   const clearFilters = () => {
     setQuery('');
@@ -544,6 +649,23 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
               </div>
             )}
 
+            {editError && (
+              <div
+                role="alert"
+                className="mt-5 flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/8 px-4 py-3 text-[13px] leading-relaxed text-destructive"
+              >
+                <TriangleAlert className="size-4 shrink-0" />
+                <p className="min-w-0 flex-1">{editError}</p>
+                <button
+                  type="button"
+                  onClick={() => setEditError(null)}
+                  className="shrink-0 rounded-md border border-destructive/30 px-2 py-0.5 text-[12px] font-medium transition-colors hover:bg-destructive/10 focus-visible:ring-[3px] focus-visible:ring-destructive/30 focus-visible:outline-none"
+                >
+                  知道了
+                </button>
+              </div>
+            )}
+
             {status === 'error' && total > 0 && !fromFile && (
               <div
                 role="alert"
@@ -675,14 +797,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
                       </span>
                     </div>
                     <div className={cn('mt-3', TILE_GRID)}>
-                      {group.bookmarks.map((bookmark) => (
-                        <BookmarkCard
-                          key={bookmark.id}
-                          bookmark={bookmark}
-                          health={health[bookmark.url]}
-                          onOpen={handleOpenBookmark}
-                        />
-                      ))}
+                      {group.bookmarks.map(renderCard)}
                     </div>
                   </section>
                 ))}
@@ -691,14 +806,7 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
 
             {visible.length > 0 && !showGroups && (
               <div className={cn('mt-5', TILE_GRID)}>
-                {visible.map((bookmark) => (
-                  <BookmarkCard
-                    key={bookmark.id}
-                    bookmark={bookmark}
-                    health={health[bookmark.url]}
-                    onOpen={handleOpenBookmark}
-                  />
-                ))}
+                {visible.map(renderCard)}
               </div>
             )}
 
@@ -727,6 +835,41 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
           </a>
         )}
       </footer>
+
+      {editMode && (
+        <EditActionBar
+          count={selectedIds.length}
+          busy={mutating}
+          onClear={() => setSelected(new Set())}
+          onDelete={() => setConfirmingDelete(true)}
+        />
+      )}
+
+      <AlertDialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              从浏览器收藏夹删除 {selectedIds.length} 项？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              这些条目会从浏览器的书签里移除，并随浏览器账号同步到其他设备。
+              Qianxu 不保存书签副本，删掉之后无法在这里撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
+              <Button variant="outline" size="sm">
+                取消
+              </Button>
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button variant="destructive" size="sm" onClick={() => void runDelete()}>
+                删除 {selectedIds.length} 项
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <input
         ref={fileInputRef}

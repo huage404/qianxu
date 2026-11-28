@@ -1,5 +1,7 @@
 import { useState, type CSSProperties } from 'react';
-import type { Bookmark, LinkHealthRecord } from '@qianxu/shared';
+import { isHttpUrl, type Bookmark, type LinkHealthRecord } from '@qianxu/shared';
+
+import { cn } from '@/lib/utils';
 
 const MONOGRAM_HUES = [262, 292, 338, 22, 152, 198, 276, 68];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -44,15 +46,30 @@ function checkedAgo(checkedAt: number, now = Date.now()): string {
   return `${days} 天前`;
 }
 
+interface BookmarkCardProps {
+  bookmark: Bookmark;
+  health?: LinkHealthRecord;
+  onOpen?: (bookmark: Bookmark) => void;
+  editMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
+  onRename?: (id: string, title: string) => void;
+  onSetUrl?: (id: string, url: string) => void;
+  /** 本地校验没过时不提交，把原因交给页面统一提示 */
+  onInvalid?: (message: string) => void;
+}
+
 export function BookmarkCard({
   bookmark,
   health,
   onOpen,
-}: {
-  bookmark: Bookmark;
-  health?: LinkHealthRecord;
-  onOpen?: (bookmark: Bookmark) => void;
-}) {
+  editMode = false,
+  selected = false,
+  onToggleSelect,
+  onRename,
+  onSetUrl,
+  onInvalid = () => {},
+}: BookmarkCardProps) {
   const [iconFailed, setIconFailed] = useState(false);
 
   let host = bookmark.url;
@@ -67,7 +84,6 @@ export function BookmarkCard({
     ? bookmark.folderPath.join(' / ')
     : bookmark.folder;
   const note = healthNote(health);
-  const tooltip = [folderLabel, bookmark.url, note].filter(Boolean).join('\n');
   const style = { '--mono': String(hueFor(host)) } as CSSProperties;
   // unknown 什么都不标：本机断网时整批都会落到这个状态，标出来等于刷屏
   const dot =
@@ -77,47 +93,103 @@ export function BookmarkCard({
         ? 'bg-amber-500'
         : null;
 
+  const icon = (
+    <span
+      aria-hidden="true"
+      className="relative grid size-10 shrink-0 place-items-center rounded-xl bg-muted transition-transform duration-200 group-hover:scale-105"
+    >
+      {bookmark.faviconUrl && !iconFailed ? (
+        <img
+          src={bookmark.faviconUrl}
+          alt=""
+          width={20}
+          height={20}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="size-5 rounded-[4px] object-contain"
+          onError={() => setIconFailed(true)}
+        />
+      ) : (
+        <span className="grid size-full place-items-center rounded-xl bg-[oklch(0.55_0.16_var(--mono)/0.14)] text-[15px] font-semibold text-[oklch(0.45_0.16_var(--mono))] dark:bg-[oklch(0.7_0.16_var(--mono)/0.16)] dark:text-[oklch(0.8_0.12_var(--mono))]">
+          {title.trim().charAt(0).toUpperCase() || '?'}
+        </span>
+      )}
+
+      {dot && (
+        <span
+          className={`absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-card ${dot}`}
+        />
+      )}
+    </span>
+  );
+
+  const shell =
+    'group relative flex min-w-0 flex-col items-center gap-3 rounded-2xl border bg-card px-4 py-5 text-center shadow-xs transition-[border-color,background-color,box-shadow] duration-200 outline-none';
+
+  // 编辑态刻意不用 <a>：链接卡片要挡住的是全部跳转路径，
+  // 只 preventDefault 掉 onClick 会漏掉中键和回车，点标题改名却把页面跳走是最糟的观感。
+  if (editMode) {
+    return (
+      <div
+        style={style}
+        className={cn(
+          shell,
+          'focus-visible:ring-[3px] focus-visible:ring-ring/30',
+          selected ? 'border-primary/60 bg-accent/40' : 'hover:border-ring/40',
+        )}
+      >
+        <label className="absolute top-2 left-2 flex cursor-pointer items-center gap-1">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect?.(bookmark.id)}
+            className="size-4 accent-primary"
+          />
+          <span className="sr-only">选择「{title}」</span>
+        </label>
+
+        {icon}
+
+        <span className="flex w-full min-w-0 flex-col gap-0.5">
+          <InlineField
+            kind="title"
+            value={bookmark.title}
+            className="text-sm font-medium"
+            onCommit={(next) => onRename?.(bookmark.id, next)}
+            onInvalid={onInvalid}
+          />
+          <InlineField
+            kind="url"
+            value={bookmark.url}
+            className="text-[11px] leading-4 text-muted-foreground"
+            onCommit={(next) => onSetUrl?.(bookmark.id, next)}
+            onInvalid={onInvalid}
+          />
+        </span>
+
+        {note && <span className="sr-only">{note}</span>}
+      </div>
+    );
+  }
+
   return (
     <a
       href={bookmark.url}
       target="_blank"
       rel="noopener noreferrer"
       style={style}
-      title={tooltip}
+      title={[folderLabel, bookmark.url, note].filter(Boolean).join('\n')}
       onClick={() => onOpen?.(bookmark)}
       onAuxClick={(event) => {
         if (event.button === 1) onOpen?.(bookmark);
       }}
-      className="group flex min-w-0 flex-col items-center gap-3 rounded-2xl border bg-card px-4 py-5 text-center shadow-xs transition-[border-color,background-color,box-shadow] duration-200 outline-none hover:border-ring/40 hover:bg-accent/30 hover:shadow-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
+      className={cn(
+        shell,
+        'hover:bg-accent/30 hover:shadow-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30',
+      )}
     >
-      <span
-        aria-hidden="true"
-        className="relative grid size-10 shrink-0 place-items-center rounded-xl bg-muted transition-transform duration-200 group-hover:scale-105"
-      >
-        {bookmark.faviconUrl && !iconFailed ? (
-          <img
-            src={bookmark.faviconUrl}
-            alt=""
-            width={20}
-            height={20}
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            className="size-5 rounded-[4px] object-contain"
-            onError={() => setIconFailed(true)}
-          />
-        ) : (
-          <span className="grid size-full place-items-center rounded-xl bg-[oklch(0.55_0.16_var(--mono)/0.14)] text-[15px] font-semibold text-[oklch(0.45_0.16_var(--mono))] dark:bg-[oklch(0.7_0.16_var(--mono)/0.16)] dark:text-[oklch(0.8_0.12_var(--mono))]">
-            {title.trim().charAt(0).toUpperCase() || '?'}
-          </span>
-        )}
-
-        {dot && (
-          <span
-            className={`absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-card ${dot}`}
-          />
-        )}
-      </span>
+      {icon}
 
       <span className="flex w-full min-w-0 flex-col gap-0.5">
         <span className="truncate text-sm font-medium">{title}</span>
@@ -126,5 +198,87 @@ export function BookmarkCard({
 
       {note && <span className="sr-only">{note}</span>}
     </a>
+  );
+}
+
+/**
+ * 点一下就地变成输入框，回车或失焦提交，Esc 放弃。
+ * 校验不过时保持编辑状态，让用户改完再来，而不是悄悄退回旧值。
+ */
+function InlineField({
+  kind,
+  value,
+  className,
+  onCommit,
+  onInvalid,
+}: {
+  kind: 'title' | 'url';
+  value: string;
+  className?: string;
+  onCommit: (value: string) => void;
+  onInvalid: (message: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className={cn(
+          'w-full min-w-0 truncate rounded-sm text-left outline-none hover:bg-accent/70 focus-visible:ring-[3px] focus-visible:ring-ring/30',
+          className,
+        )}
+        title={kind === 'title' ? '点击重命名' : '点击修改链接'}
+        onClick={() => {
+          setDraft(value);
+          setEditing(true);
+        }}
+      >
+        {value}
+      </button>
+    );
+  }
+
+  const commit = () => {
+    const next = draft.trim();
+    if (kind === 'title' && !next) {
+      onInvalid('标题不能为空');
+      return;
+    }
+    if (kind === 'url' && !isHttpUrl(next)) {
+      onInvalid('链接必须是 http 或 https 地址');
+      return;
+    }
+    setEditing(false);
+    if (next !== value) onCommit(next);
+  };
+
+  return (
+    <input
+      autoFocus
+      value={draft}
+      // 不用 type="url"：浏览器的原生校验会抢在 commit 之前拦下回车，
+      // 而这里的提示文案要由 onInvalid 统一给到页面
+      type="text"
+      spellCheck={false}
+      aria-label={kind === 'title' ? '书签标题' : '书签链接'}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          commit();
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setEditing(false);
+        }
+      }}
+      className={cn(
+        'w-full min-w-0 rounded-sm border bg-background px-1 py-0.5 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30',
+        className,
+      )}
+    />
   );
 }
