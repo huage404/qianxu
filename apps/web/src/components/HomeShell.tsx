@@ -28,6 +28,7 @@ import { BookmarkCard } from '@/components/BookmarkCard';
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { BookmarksSidebar, type FolderActions } from '@/components/BookmarksSidebar';
 import { EditActionBar } from '@/components/EditActionBar';
+import { EditModeBanner } from '@/components/EditModeBanner';
 import { EmptyState } from '@/components/EmptyState';
 import { InlineField } from '@/components/InlineField';
 import type { NewTabState } from '@/components/NewTabHint';
@@ -431,8 +432,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
    */
   useEffect(() => {
     if (!pendingFocusId) return;
-    const trigger = [...document.querySelectorAll('[data-card-menu]')].find(
-      (element) => element.getAttribute('data-card-menu') === pendingFocusId,
+    const trigger = [...document.querySelectorAll('[data-card-menu-trigger]')].find(
+      (element) => element.getAttribute('data-card-menu-trigger') === pendingFocusId,
     );
     setPendingFocusId(null);
     if (trigger instanceof HTMLElement) trigger.focus();
@@ -484,6 +485,10 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
       dragIds={selected.has(bookmark.id) ? selectedIds : [bookmark.id]}
       moveTargets={folderActions ? moveTargets : undefined}
       onMoveTo={(id, folderId) => void moveBookmarks([id], folderId)}
+      onDelete={(id) => {
+        setSelected(new Set([id]));
+        setConfirmingDelete(true);
+      }}
       onDragEnd={() => setDragOver(null)}
     />
   );
@@ -616,6 +621,8 @@ export function HomeShell({ icpNumber }: HomeShellProps) {
         editHint={editHint}
         onToggleEdit={() => setEditMode((value) => !value)}
       />
+
+      {editMode && <EditModeBanner onExit={() => setEditMode(false)} />}
 
       <div className="relative mx-auto flex w-full max-w-[1200px] flex-1 flex-col px-5 sm:px-8 lg:min-h-0 lg:flex-row lg:gap-10 lg:overflow-hidden">
         {total > 0 && (

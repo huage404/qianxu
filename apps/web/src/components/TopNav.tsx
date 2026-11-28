@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Download, Pencil, RotateCw, ShieldAlert, Upload } from 'lucide-react';
+import { Check, Download, Pencil, RotateCw, ShieldAlert, Upload } from 'lucide-react';
 
 import { BookmarkFilter } from '@/components/BookmarkFilter';
 import { LogoMark } from '@/components/LogoMark';
@@ -88,19 +88,21 @@ export function TopNav({
           )}
           {newTabState && <NewTabHint state={newTabState} />}
           <Button
-            variant={editMode ? 'secondary' : 'ghost'}
+            variant={editMode ? 'default' : 'outline'}
             size="sm"
             aria-pressed={editMode}
             disabled={editHint !== null}
             onClick={onToggleEdit}
             title={editHint ?? (editMode ? '退出编辑，页面恢复只读' : EDIT_HINT_ON)}
             className={cn(
-              'text-muted-foreground hover:text-foreground',
-              editMode && 'text-foreground',
+              'shrink-0',
+              !editMode &&
+                editHint === null &&
+                'border-primary/35 text-primary hover:bg-primary/10 hover:text-primary',
             )}
           >
-            <Pencil className="size-3.5" />
-            <span className="hidden md:inline">{editMode ? '退出编辑' : '编辑'}</span>
+            {editMode ? <Check className="size-3.5" /> : <Pencil className="size-3.5" />}
+            {editMode ? '完成' : '编辑'}
           </Button>
           <Button
             variant="ghost"

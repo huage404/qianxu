@@ -1,13 +1,7 @@
-import { useState, type CSSProperties } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { type Bookmark, type LinkHealthRecord } from '@qianxu/shared';
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { BookmarkActions, SelectedBadge, type MenuAnchorPoint } from '@/components/BookmarkActions';
 import { InlineField, requireHttpUrl } from '@/components/InlineField';
 import { DRAG_MIME } from '@/lib/drag';
 import type { MoveTarget } from '@/lib/folders';
@@ -56,6 +50,8 @@ function checkedAgo(checkedAt: number, now = Date.now()): string {
   return `${days} 天前`;
 }
 
+type EditingField = 'title' | 'url' | null;
+
 interface BookmarkCardProps {
   bookmark: Bookmark;
   health?: LinkHealthRecord;
@@ -69,9 +65,10 @@ interface BookmarkCardProps {
   onInvalid?: (message: string) => void;
   /** 拖动这张卡片要带走的全部 id：选中时是整组，否则只有自己 */
   dragIds?: string[];
-  /** 省略即不提供「移动到」，卡片也不再挂拖拽 */
+  /** 省略即不提供动作菜单，卡片也不再挂拖拽 */
   moveTargets?: MoveTarget[];
   onMoveTo?: (id: string, folderId: string) => void;
+  onDelete?: (id: string) => void;
   onDragEnd?: () => void;
 }
 
@@ -88,10 +85,14 @@ export function BookmarkCard({
   dragIds,
   moveTargets,
   onMoveTo,
+  onDelete,
   onDragEnd,
 }: BookmarkCardProps) {
   const [iconFailed, setIconFailed] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [editing, setEditing] = useState<EditingField>(null);
+  const [anchor, setAnchor] = useState<MenuAnchorPoint | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   let host = bookmark.url;
   try {
@@ -113,6 +114,21 @@ export function BookmarkCard({
       : health?.status === 'suspect'
         ? 'bg-amber-500'
         : null;
+
+  // 已经在当前文件夹里的目标不必出现在「移动到」里
+  const targets = (moveTargets ?? []).filter((target) => target.id !== bookmark.folderId);
+
+  /**
+   * 由菜单在交还焦点的那一刻调用，把编辑焦点交给行内输入框。
+   * 顺带全选，让用户直接覆盖着打。
+   */
+  const focusEditor = () => {
+    const input = rootRef.current?.querySelector('input');
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      input.select();
+    }
+  };
 
   const icon = (
     <span
@@ -151,13 +167,18 @@ export function BookmarkCard({
   // 编辑态刻意不用 <a>：链接卡片要挡住的是全部跳转路径，
   // 只 preventDefault 掉 onClick 会漏掉中键和回车，点标题改名却把页面跳走是最糟的观感。
   if (editMode) {
-    // 已经在当前文件夹里的目标不必出现在「移动到」里
-    const targets = (moveTargets ?? []).filter((target) => target.id !== bookmark.folderId);
+    const toggle = () => onToggleSelect?.(bookmark.id);
 
     return (
       <div
+        ref={rootRef}
+        role="button"
+        tabIndex={0}
+        aria-pressed={selected}
+        aria-label={title}
+        title={[folderLabel, bookmark.url, note].filter(Boolean).join('\n')}
         style={style}
-        draggable={targets.length > 0}
+        draggable={targets.length > 0 && editing === null}
         onDragStart={(event) => {
           if (targets.length === 0) return;
           event.dataTransfer.effectAllowed = 'move';
@@ -168,69 +189,91 @@ export function BookmarkCard({
           setDragging(false);
           onDragEnd?.();
         }}
+        onClick={() => {
+          if (editing === null) toggle();
+        }}
+        onKeyDown={(event) => {
+          if (editing !== null) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggle();
+          }
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setAnchor({ x: event.clientX, y: event.clientY, align: 'start' });
+        }}
         className={cn(
           shell,
-          'focus-visible:ring-[3px] focus-visible:ring-ring/30',
-          selected ? 'border-primary/60 bg-accent/40' : 'hover:border-ring/40',
+          'cursor-pointer focus-visible:ring-[3px] focus-visible:ring-ring/30',
+          selected
+            ? 'border-primary bg-primary/8 ring-2 ring-primary/35'
+            : 'hover:border-ring/40 hover:bg-accent/20',
           dragging && 'opacity-50',
         )}
       >
-        <label className="absolute top-2 left-2 flex cursor-pointer items-center gap-1">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={() => onToggleSelect?.(bookmark.id)}
-            className="size-4 accent-primary"
-          />
-          <span className="sr-only">选择「{title}」</span>
-        </label>
+        {selected && <SelectedBadge />}
 
         {targets.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                data-card-menu={bookmark.id}
-                aria-label={`把「${title}」移动到`}
-                className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-70 outline-none transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/30 data-[state=open]:opacity-100"
-              >
-                <MoreHorizontal className="size-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-[60vh] overflow-y-auto">
-              {targets.map((target) => (
-                <DropdownMenuItem
-                  key={target.id}
-                  style={{ paddingLeft: `${8 + target.depth * 14}px` }}
-                  onSelect={() => onMoveTo?.(bookmark.id, target.id)}
-                >
-                  {target.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <BookmarkActions
+            subjectId={bookmark.id}
+            subject={title}
+            anchor={anchor}
+            targets={targets}
+            onOpen={setAnchor}
+            onClose={() => setAnchor(null)}
+            onHandoff={focusEditor}
+            onRename={() => setEditing('title')}
+            onEditUrl={() => setEditing('url')}
+            onMoveTo={(folderId) => onMoveTo?.(bookmark.id, folderId)}
+            onDelete={() => onDelete?.(bookmark.id)}
+          />
         )}
 
         {icon}
 
-        <span className="flex w-full min-w-0 flex-col gap-0.5">
-          <InlineField
-            label="书签标题"
-            hint="点击重命名"
-            value={bookmark.title}
-            className="text-sm font-medium"
-            onCommit={(next) => onRename?.(bookmark.id, next)}
-            onInvalid={onInvalid}
-          />
-          <InlineField
-            label="书签链接"
-            hint="点击修改链接"
-            value={bookmark.url}
-            className="text-[11px] leading-4 text-muted-foreground"
-            validate={requireHttpUrl}
-            onCommit={(next) => onSetUrl?.(bookmark.id, next)}
-            onInvalid={onInvalid}
-          />
+        <span
+          className="flex w-full min-w-0 flex-col gap-0.5"
+          onClick={(event) => {
+            if (editing !== null) event.stopPropagation();
+          }}
+        >
+          {editing === 'title' ? (
+            <InlineField
+              label="书签标题"
+              hint=""
+              value={bookmark.title}
+              startEditing
+              className="text-sm font-medium"
+              onCommit={(next) => {
+                setEditing(null);
+                onRename?.(bookmark.id, next);
+              }}
+              onCancel={() => setEditing(null)}
+              onInvalid={onInvalid}
+            />
+          ) : (
+            <span className="truncate text-sm font-medium">{title}</span>
+          )}
+
+          {editing === 'url' ? (
+            <InlineField
+              label="书签链接"
+              hint=""
+              value={bookmark.url}
+              startEditing
+              validate={requireHttpUrl}
+              className="text-[11px] leading-4 text-muted-foreground"
+              onCommit={(next) => {
+                setEditing(null);
+                onSetUrl?.(bookmark.id, next);
+              }}
+              onCancel={() => setEditing(null)}
+              onInvalid={onInvalid}
+            />
+          ) : (
+            <span className="truncate text-[11px] leading-4 text-muted-foreground">{host}</span>
+          )}
         </span>
 
         {note && <span className="sr-only">{note}</span>}

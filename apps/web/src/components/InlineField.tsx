@@ -72,7 +72,10 @@ export function InlineField({
       return;
     }
     setEditing(false);
+    // 值没变就不算一次提交，但也要通知外部退出，否则由外部驱动的
+    // 「开始编辑」状态会悬着：内部已经退回文本，外部还以为在编辑
     if (next !== value) onCommit(next);
+    else onCancel?.();
   };
 
   return (
